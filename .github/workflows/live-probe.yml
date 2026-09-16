@@ -1,0 +1,86 @@
+name: live smoke test (deployment)
+
+# Drives the REAL deployment over the network: health, a small agent task, then
+# verifies the artifact it produced and reports the publish configuration.
+# Runs when this file changes, or on demand from the Actions tab
+# (workflow_dispatch needs the file on the default branch).
+on:
+  push:
+    paths:
+      - ".github/workflows/live-probe.yml"
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Base URL of the deployment
+        required: false
+        default: https://agent-3tll.onrender.com
+      prompt:
+        description: Task to run through the live agent
+        required: false
+        default: "Create live-test.txt containing the output of `date -u` and the hostname, then run `cat live-test.txt` to verify it. Do not start servers, do not publish."
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BASE: ${{ github.event.inputs.base || 'https://agent-3tll.onrender.com' }}
+      PROMPT: ${{ github.event.inputs.prompt || 'Create live-test.txt containing the output of `date -u` and the hostname, then run `cat live-test.txt` to verify it. Do not start servers, do not publish.' }}
+      CHAT: live-probe-${{ github.run_number }}
+
+    steps:
+      - name: 1 · wake the service and read the basics
+        run: |
+          set -uo pipefail
+          say() { printf '\n───── %s ─────\n' "$1"; }
+          # Render free instances hibernate; a cold start can take ~60s.
+          say "GET /api/health (cold start tolerated)"
+          curl -sS -m 180 --retry 8 --retry-delay 10 --retry-all-errors "$BASE/api/health" | tee health.json; echo
+          say "GET /api/system"
+          curl -sS -m 120 --retry 4 --retry-delay 5 --retry-all-errors "$BASE/api/system" | tee system.json; echo
+          say "GET /api/publish (new endpoint — 404 means the old build is deployed)"
+          curl -sS -m 60 -o publish.json -w 'status=%{http_code}\n' "$BASE/api/publish" || true
+          cat publish.json 2>/dev/null; echo
+          say "GET /api/jobs before"
+          curl -sS -m 60 "$BASE/api/jobs" | tee jobs-before.json; echo
+
+      - name: 2 · run a real task through the live agent
+        run: |
+          set -uo pipefail
+          printf '{"messages":[{"role":"user","content":%s}],"chatId":"%s","forceAgent":true,"maxSteps":12}' \
+            "$(printf '%s' "$PROMPT" | jq -Rs .)" "$CHAT" > payload.json
+          echo "payload: $(cat payload.json)"
+          # SSE stream: keep it open, but the job also runs detached if we time out.
+          timeout 900 curl -sS -N -H 'content-type: application/json' --data @payload.json \
+            "$BASE/api/smart" | tee sse.log | grep --line-buffered -E '"type":"(route|step|tool_start|tool_end|term_data|critic|publish|error|done|job_end)"' || true
+          echo
+          echo "── event type counts ──"
+          grep -o '"type":"[a-z_]*"' sse.log | sort | uniq -c | sort -rn || true
+
+      - name: 3 · verify what the agent actually produced
+        run: |
+          set -uo pipefail
+          say() { printf '\n───── %s ─────\n' "$1"; }
+          say "GET /api/jobs after"
+          for i in $(seq 1 30); do
+            curl -sS -m 60 "$BASE/api/jobs" -o jobs-after.json || true
+            status=$(jq -r --arg c "$CHAT" '.[] | select(.chatId==$c) | .status' jobs-after.json 2>/dev/null | head -1)
+            echo "attempt $i: status='${status:-none}'"
+            [ "${status:-}" != "running" ] && [ -n "${status:-}" ] && break
+            sleep 10
+          done
+          cat jobs-after.json; echo
+          say "GET /api/ws/tree"
+          curl -sS -m 120 "$BASE/api/ws/tree?dir=." | head -c 4000; echo
+          say "GET /api/ws/file?path=live-test.txt"
+          curl -sS -m 60 "$BASE/api/ws/file?path=live-test.txt" -w '\nstatus=%{http_code}\n' | head -c 2000
+
+      - name: 4 · uploads the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-probe-${{ github.run_number }}
+          path: |
+            *.json
+            sse.log
+          if-no-files-found: ignore
