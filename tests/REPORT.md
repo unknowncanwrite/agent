@@ -294,8 +294,39 @@ write. Fix: auth (see #4), and require an explicit allow-list for hook commands.
 
 ## 5. The live deployment
 
-Direct probes of `https://agent-3tll.onrender.com` (this sandbox's own egress to that host is
-blocked, so these come from the platform's HTTP fetcher, not from the test suite):
+### 5a. Live end-to-end run (2026-09-16)
+
+Egress from the development sandbox is allow-listed to GitHub, so the live test is driven by
+`.github/workflows/live-probe.yml` from a GitHub runner (open internet) against the real
+deployment — no mocks, no local copy:
+
+| run | task | result | model | tools | events |
+|---|---|---|---|---|---|
+| 1 | write `live-test.txt` (`date -u` + hostname), run `cat` | `done` | dashscope/qwen3.8-flash | 1 (`run_command`) | 52 |
+| 2 | same | `done` | dashscope/qwen3.8-flash | 1 | 26 |
+| 3 | same | `done` | dashscope/qwen3.8-max-0902 | 1 | 38 |
+| 4 | same | `done` | dashscope/qwen3.8-flash | 1 | 31 |
+| 5 | same | `done` | dashscope/qwen3.8-max-0902 | 1 | 38 |
+
+Verified from the deployment itself afterwards:
+
+* `/api/jobs` lists the runs: `{"chatId":"live-probe-4","status":"done","tools":1,"step":2,
+  "lastTool":"run_command","model":"dashscope/qwen3.8-flash"}` — the detached-job manager,
+  per-job model tracking and tool counters all work in production.
+* `/api/ws/file?path=live-test.txt` → `{"content":"Wed Sep 16 15:28:17 UTC 2026\nsrv-dal3tkn40ujc739f48kg-hibernate-84b9cb475f-vb5lf\n"}` —
+  the file was really created and executed **on the Render instance** (the hostname is the
+  container id), and the workspace API returns it byte-exact.
+* `/api/health` → `{"server":"ok","key":true,"upstream":true,"models":175,"free":167}`.
+* `/api/publish` → `Cannot GET /api/publish`: the deployment still runs the `main` build, so
+  the publish feature is **not** there yet (see `docs/CONNECT-HOSTING.md` for how to deploy it).
+* The probe reports `publish backends ready: none` — no host credential is configured on the
+  deployment yet, which is exactly what the new Hosting chip shows in the UI.
+
+Operational note: the free Render instance hibernates. The first request of the day returned
+Render's "Application loading" page and the service needed ~60 s to come up (the workflow
+retries with backoff, so it still passed). After that it answered in milliseconds.
+
+### 5b. Endpoint probes (from the platform fetcher)
 
 * `/api/health` → ok, key present, upstream reachable, **175 models (167 free)** via
   `https://api.xkiro.com/v1`, and it publishes `keyPreview` (first 8 + last 4 chars of the
