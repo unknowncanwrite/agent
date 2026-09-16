@@ -111,6 +111,70 @@ jobs:
           health=$(cat health.json 2>/dev/null | head -c 200)
           echo "::notice::health: $health"
 
+      # A real browser drives the live UI: load it, send a message, wait for the answer.
+      # Screenshots are attached to the run; findings come back as annotations.
+      - name: 3b · drive the live UI in a real browser
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/uitest && cd /tmp/uitest
+          npm init -y >/dev/null 2>&1
+          npm i playwright@1.49.0 --no-audit --no-fund >/dev/null 2>&1 || { echo "::warning::could not install playwright"; exit 0; }
+          npx playwright install --with-deps chromium >/dev/null 2>&1 || echo "::warning::chromium install had issues"
+          cat > probe.mjs <<'JS'
+          import { chromium } from "playwright";
+          const url = process.env.BASE;
+          const errors = [];
+          const say = (m) => console.log("::notice::" + m);
+          const b = await chromium.launch();
+          const page = await b.newPage({ viewport: { width: 1440, height: 900 } });
+          page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
+          page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
+          try {
+            await page.goto(url, { waitUntil: "domcontentloaded", timeout: 150000 });
+            await page.waitForSelector("#input", { timeout: 60000 });
+            say(`ui loaded: title="${await page.title()}" header buttons=${await page.locator("#bar button").count()} rail=${await page.locator("#railChats").count()}`);
+            await page.screenshot({ path: "ui-1-loaded.png" });
+
+            const ticket = "UI-PROBE-" + Date.now().toString(36);
+            await page.fill("#input", `Reply with exactly this token and nothing else: ${ticket}`);
+            await page.click("#sendBtn");
+            await page.waitForTimeout(1500);
+            await page.screenshot({ path: "ui-2-sending.png" });
+            say(`ui send clicked, busy=${await page.locator("#stopBtn").isVisible().catch(() => false)}`);
+
+            const seen = await page
+              .waitForFunction(
+                (t) => {
+                  const body = document.querySelector(".turn.ai .ai-body");
+                  if (!body) return false;
+                  const txt = body.innerText || "";
+                  return txt.includes(t) ? txt.slice(-200) : false;
+                },
+                ticket,
+                { timeout: 240000 }
+              )
+              .then((h) => h.jsonValue())
+              .catch(() => null);
+            say(seen ? `ui REPLY OK — the live UI streamed: ${String(seen).replace(/\n/g, " ").slice(0, 160)}`
+                     : "ui reply NOT seen within 240s (the message may still be running — check /api/jobs)");
+            await page.screenshot({ path: "ui-3-reply.png", fullPage: true });
+
+            const chips = await page.evaluate(() => ({
+              publish: !!document.querySelector("#publishBtn"),
+              publishLabel: document.querySelector("#publishLbl")?.textContent || null,
+            }));
+            say(`ui hosting chip present=${chips.publish} label="${chips.publishLabel}" (false = the deployment still runs the older build)`);
+          } catch (e) {
+            say("ui probe failed: " + String(e).split("\n")[0].slice(0, 200));
+          } finally {
+            say("ui console errors: " + (errors.slice(0, 3).join(" | ") || "none"));
+            await b.close().catch(() => {});
+          }
+          JS
+          BASE="$BASE" node probe.mjs || echo "::warning::ui probe script exited non-zero"
+          cp -f /tmp/uitest/ui-*.png "$GITHUB_WORKSPACE/" 2>/dev/null || true
+
       - name: 4 · uploads the evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -121,6 +185,7 @@ jobs:
             sse.log
             sse-publish.log
             page.html
+            ui-*.png
           if-no-files-found: ignore
 
       # The key facts are emitted as annotations (readable through the API/UI without
