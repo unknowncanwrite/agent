@@ -78,6 +78,14 @@ jobs:
           say "GET /api/ws/file?path=live-test.txt"
           curl -sS -m 60 "$BASE/api/ws/file?path=live-test.txt" -w '\nstatus=%{http_code}\n' | head -c 2000
 
+          # annotations are readable through the API without downloading logs
+          echo "::notice::live job status: ${status:-unknown}"
+          echo "::notice::agent answer: $(jq -r '.[] | select(.chatId==\"'"$CHAT"'\") | .title' jobs-after.json 2>/dev/null | head -1)"
+          file_status=$(curl -sS -m 60 -o live-test.txt -w '%{http_code}' "$BASE/api/ws/file?path=live-test.txt" || echo 000)
+          echo "::notice::live-test.txt status=$file_status content=$(head -c 160 live-test.txt | tr '\n' ' ')"
+          health=$(cat health.json 2>/dev/null | head -c 200)
+          echo "::notice::health: $health"
+
       - name: 4 · uploads the evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -88,23 +96,30 @@ jobs:
             sse.log
           if-no-files-found: ignore
 
-      # Artifacts are only downloadable with an authenticated session; mirror the same
-      # files to a results branch so anyone (or a script) can `git fetch` them.
+      # Artifacts need an authenticated session to download; mirror the same files to a
+      # results branch through the contents API so any script can `git fetch` them.
       - name: 5 · publish the evidence to the results branch
         if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
-          mkdir -p /tmp/out && cp -f ./*.json sse.log /tmp/out/ 2>/dev/null || true
-          cd "$GITHUB_WORKSPACE"
-          git config user.email "actions@github.com"
-          git config user.name "live probe"
-          git checkout --orphan live-probe-results
-          git rm -r --cached . >/dev/null 2>&1 || true
-          rm -rf ./* .github 2>/dev/null || true
-          mkdir -p run-${{ github.run_number }}
-          cp -f /tmp/out/* run-${{ github.run_number }}/ 2>/dev/null || true
-          printf 'run %s\nbranch: %s\nsha: %s\n' "${{ github.run_number }}" "${{ github.ref_name }}" "${{ github.sha }}" > run-${{ github.run_number }}/RUN.txt
-          printf '# live probe results\n\nOne folder per run. Newest run: %s\n' "${{ github.run_number }}" > README.md
-          git add -A
-          git commit -q -m "live probe run ${{ github.run_number }} (${{ job.status }})" || true
-          git push -q --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" live-probe-results || echo "push failed"
+          REPO="${{ github.repository }}"
+          BRANCH=live-probe-results
+          RUN=${{ github.run_number }}
+          jq -n --arg base "$BASE" --arg chat "$CHAT" --arg ref "${{ github.ref_name }}"                 --arg sha "${{ github.sha }}" --arg run "$RUN" \
+                '{base:$base, chat:$chat, branch:$ref, sha:$sha, run:$run}' > summary.json
+          # create the branch once
+          sha=$(gh api "repos/$REPO/git/ref/heads/$BRANCH" --jq .object.sha 2>/dev/null)
+          if [ -z "${sha:-}" ]; then
+            head=$(gh api "repos/$REPO/git/ref/heads/${{ github.ref_name }}" --jq .object.sha 2>/dev/null || echo "${{ github.sha }}")
+            gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$BRANCH" -f sha="$head" >/dev/null 2>&1 || true
+          fi
+          for f in summary.json health.json system.json publish.json jobs-before.json jobs-after.json live-test.txt sse.log; do
+            [ -f "$f" ] || continue
+            b64=$(base64 -w0 "$f" | tr -d '\n')
+            gh api -X PUT "repos/$REPO/contents/live-probe/run-$RUN/$f" \
+              -f message="live probe run $RUN: $f" -f branch="$BRANCH" -f content="$b64" >/dev/null 2>&1 \
+              && echo "published $f" || echo "could not publish $f"
+          done
+          echo "--- summary ---"; cat summary.json
