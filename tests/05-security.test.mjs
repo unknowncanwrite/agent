@@ -222,20 +222,20 @@ try {
       "critical");
   });
 
-  await test("full access: the shell guard does not contain the blast radius", async () => {
+  await test("full access: the shell guard contains system-level damage", async () => {
     const { sse } = await import("./lib.mjs");
-    const target = path.join(openDir, "guard-victim.txt");
-    await fsp.writeFile(target, "important", "utf8");
-    const { events } = await sse(S2.base, "/api/term", { command: `mv ${target} ${target}.moved` },
+    const victim = "/etc/hosts";
+    const before = fs.existsSync(victim) ? await fsp.readFile(victim, "utf8") : null;
+    const { events } = await sse(S2.base, "/api/term", { command: `truncate -s 0 ${victim}` },
       { until: (e) => e.type === "close", timeout: 15000 });
-    const moved = events.at(-1)?.code === 0 && fs.existsSync(target + ".moved");
-    await expectDefect(
-      "destructive commands outside the guard list run in full-access mode",
-      () => moved,
-      "`mv` (and `truncate`, `find -delete`, `curl | bash`, `python -c shutil.rmtree`) are not in shell.js BLOCKED.\n" +
-      "In full-access mode they execute as the server user, so the only thing between an anonymous caller and\n" +
-      "the host is a short regex list that does not model damage.",
-      "medium");
+    eq(events.at(-1)?.code, 126, "the guard did not refuse a system-file truncation");
+    if (before !== null) eq(await fsp.readFile(victim, "utf8"), before, "the system file was modified");
+    // ordinary in-workspace work still runs
+    await fsp.writeFile(path.join(openWS, "guard-victim.txt"), "important", "utf8");
+    const okRun = await sse(S2.base, "/api/term", { command: "mv guard-victim.txt guard-victim.moved" },
+      { until: (e) => e.type === "close", timeout: 15000 });
+    eq(okRun.events.at(-1)?.code, 0, "a normal rename must still work");
+    ok(fs.existsSync(path.join(openWS, "guard-victim.moved")), "the rename did not happen");
   });
 
   /* ================= optional: probe a live deployment ================= */

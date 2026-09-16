@@ -19,7 +19,8 @@ node tests/run.mjs security
 * every suite runs inside a throwaway copy of the app under `/tmp` with
   `AGENT_WORKSPACE` pointing at a temp workspace — your repo and workspace are untouched
 
-Last full run on this commit: **154 passed, 0 failed, 15 findings**.
+Last full run: **183 passed, 0 failed, 6 findings** (the 6 are the deliberately unfixed
+security-posture items — see `REPORT.md`).
 
 ## What is in here
 
@@ -37,8 +38,9 @@ Last full run on this commit: **154 passed, 0 failed, 15 findings**.
 | `01-static.test.mjs` | repo sanity: every source parses, assets/launchers/skills exist, no committed credentials, repo hygiene |
 | `02-units.test.mjs` | shell guards + `runStream`, memory, router (`heuristic`, `route`, `roleFor`), supervisor detectors `detect()`/`isFailure`/`tracker`, hooks, skills, mcp, jobs, and the agent tool implementations (`makeImpl`) |
 | `03-models.test.mjs` | model catalogue, ranking/pick/chainFor, `sanitize`, quota/balance classification, `complete()` retries + failover, `streamWithFailover()` stall guard, `parallel()`, provider resolution |
-| `04-server.test.mjs` | the real server end-to-end: SSE chat, `/api/smart` routing, the full autonomous loop (write → run → verify), parallel tool batches, unknown tool, `ask_user`, supervisor gates, maxSteps, jobs list/reattach/stop/duplicate, terminal, upload, workspace API + reset, memory, discovery endpoints |
-| `05-security.test.mjs` | default jailed config vs `AGENT_FULL_ACCESS=true` (what the public deployment runs), auth surface, shell-guard coverage, hook injection, key-preview exposure |
+| `04-server.test.mjs` | the real server end-to-end: SSE chat, `/api/smart` routing, the full autonomous loop (write → run → verify), parallel tool batches, unknown tool, `ask_user`, supervisor gates, maxSteps, jobs list/reattach/stop/duplicate, terminal, upload, workspace API + reset, memory, discovery endpoints, `/api/publish`, and a build run that auto-publishes and streams `publish_start`/`publish_log`/`publish` |
+| `05-security.test.mjs` | default jailed config vs `AGENT_FULL_ACCESS=true` (what the public deployment runs), auth surface, shell-guard coverage (blocked *and* allowed, so the guard cannot silently start refusing real work), hook injection, key-preview exposure |
+| `06-publish.test.mjs` | auto-publish: site detection, `npm run build` handling, file collection (skip/binary/base64), the Vercel / Render / GitHub backends against the mock's fake APIs, and the `publish_website` tool including the "nothing configured" fallback |
 
 ### Mock upstream
 
@@ -55,6 +57,10 @@ Scenario control (`POST /__ctl` on the mock's origin, not under `/v1`):
 Models served: `mock-max` (200k ctx, reasoning+tools+vision), `mock-flash` (32k),
 `mock-plain` (128k), `mock-embedding-v1` (no tools), `mock-paid-max` (paid tier).
 
+The same mock also fakes the hosting APIs so publishing can be tested offline:
+`POST /v13/deployments` (Vercel, recorded in `GET /__deployments`), `POST /hook` (Render
+deploy hook), `GET /v1/services/:id` + `POST /v1/services/:id/deploys` (Render API).
+
 `GET /__requests` returns every completion request the mock received (model,
 message roles, tool names, whether `temperature` was sent, …) — that is how the
 retry/sanitising tests prove what actually went over the wire.
@@ -70,8 +76,9 @@ retry/sanitising tests prove what actually went over the wire.
   classifier would otherwise route a build prompt to plain chat.
 * **Timing.** Long-running scenarios need `ctl.state.delayMs > 0` to stay observable;
   the suite always resets it to `0` afterwards, otherwise later runs crawl.
-* **`invalidateCache()`.** `write_file`/`edit_file`/`delete_file` invalidate the read
-  and tree caches; the HTTP layer does not (see the stale-cache finding in 04).
+* **`invalidateCache()`.** `write_file`/`edit_file`/`delete_file` invalidate the read and
+  tree caches, and `/api/ws/reset` now does too (the stale-cache finding is fixed; the test
+  still guards it).
 * A defect that must be *proved* is written as `expectDefect(...)`: while the bug is
   present the suite prints a finding; once the bug is fixed the same test turns into
   a green `✓ (fixed)` line. Nothing here silently skips.

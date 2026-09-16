@@ -222,6 +222,9 @@ export async function complete(body, { chain, signal, onSwitch, retries = 1, tim
       } catch (e) {
         lastErr = e;
         if (signal?.aborted) throw e;
+        // Exhausted quota is a provider-wide condition: bench the whole provider so the
+        // model picker stops offering its models (matching streamWithFailover()).
+        if (isQuota(e)) { markProviderDead(model); break; }
         if (!transient(e)) { markDead(model); break; }        // hard error: skip model
         if (a === retries - 1) markDead(model);
         else await new Promise((r) => setTimeout(r, 700 * (a + 1)));

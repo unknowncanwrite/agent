@@ -89,7 +89,13 @@ export function attach(chatId, listener, since = -1) {
     if (ev._i > since) { try { listener(ev); } catch {} }
   }
   if (job.status !== "running") {
-    try { listener({ type: "job_end", status: job.status, _i: job.seq }); } catch {}
+    // The replay above may already have ended the response (job_end is the last buffered
+    // event). Writing a second one throws ERR_STREAM_WRITE_AFTER_END asynchronously, which
+    // no try/catch here can capture.
+    const last = job.buffer[job.buffer.length - 1];
+    if (!last || last.type !== "job_end") {
+      try { listener({ type: "job_end", status: job.status, _i: job.seq }); } catch {}
+    }
     return { detach() {} };
   }
   job.subs.add(listener);

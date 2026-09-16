@@ -616,6 +616,33 @@ async function send() {
               `<div class="log ok"><div class="log-h"><span class="ic">🗜</span>
                <span class="nm">context compacted</span><span class="ar">~${(ev.tokens / 1000).toFixed(0)}k tokens</span></div></div>`);
             break;
+          case "publish_start":
+            body.insertAdjacentHTML("beforeend",
+              `<div class="log run"><div class="log-h"><span class="ic">🚀</span><span class="nm">publishing</span>
+               <span class="ar">${esc(ev.backend || "")} · ${esc(ev.dir || "")}${ev.auto ? " (automatic)" : ""}</span></div></div>`);
+            toBottom();
+            break;
+          case "publish_log":
+            body.insertAdjacentHTML("beforeend",
+              `<div class="log"><div class="log-h"><span class="ic">🚀</span><span class="nm">publisher</span>
+               <span class="ar">${esc(String(ev.text || "").slice(0, 120))}</span></div></div>`);
+            toBottom();
+            break;
+          case "publish": {
+            PUBUI.last = ev;
+            const d = document.createElement("div");
+            d.className = "artifact publish";
+            d.innerHTML = ev.ok
+              ? `<span class="art-ic">🌐</span><div class="art-body"><b>Published${ev.auto ? " automatically" : ""}</b>
+                   <div class="art-path"><a href="${ev.url}" target="_blank" rel="noopener">${esc(ev.url)}</a></div>
+                   <div class="art-meta">${esc(ev.backend || "")}${ev.files ? ` · ${ev.files} files` : ""}${ev.dir ? ` · ${esc(ev.dir)}` : ""}</div></div>
+                 <a class="art-dl" href="${ev.url}" target="_blank" rel="noopener">Open</a>`
+              : `<span class="art-ic">${ev.local ? "🖥" : "⚠️"}</span><div class="art-body"><b>${ev.local ? "Local preview" : "Publish failed"}</b>
+                   ${ev.url ? `<div class="art-path"><a href="${ev.url}" target="_blank" rel="noopener">${esc(ev.url)}</a></div>` : ""}
+                   <div class="art-meta">${esc(ev.error || (ev.local ? "no host configured — set VERCEL_TOKEN or a Render deploy hook to go public" : ""))}</div></div>`;
+            body.appendChild(d); toBottom();
+            break;
+          }
           case "delta":
             thinking.remove();
             acc += ev.text;
@@ -1217,6 +1244,33 @@ function attachChat(chatId) {
         x.textContent = `exit ${ev.code}`;
         t.appendChild(x); break;
       }
+          case "publish": {
+            PUBUI.last = ev;
+            const d = document.createElement("div");
+            d.className = "artifact publish";
+            d.innerHTML = ev.ok
+              ? `<span class="art-ic">🌐</span><div class="art-body"><b>Published${ev.auto ? " automatically" : ""}</b>
+                   <div class="art-path"><a href="${ev.url}" target="_blank" rel="noopener">${esc(ev.url)}</a></div>
+                   <div class="art-meta">${esc(ev.backend || "")}${ev.files ? ` · ${ev.files} files` : ""}${ev.dir ? ` · ${esc(ev.dir)}` : ""}</div></div>
+                 <a class="art-dl" href="${ev.url}" target="_blank" rel="noopener">Open</a>`
+              : `<span class="art-ic">${ev.local ? "🖥" : "⚠️"}</span><div class="art-body"><b>${ev.local ? "Local preview" : "Publish failed"}</b>
+                   ${ev.url ? `<div class="art-path"><a href="${ev.url}" target="_blank" rel="noopener">${esc(ev.url)}</a></div>` : ""}
+                   <div class="art-meta">${esc(ev.error || (ev.local ? "no host configured — set VERCEL_TOKEN or a Render deploy hook to go public" : ""))}</div></div>`;
+            body.appendChild(d); toBottom();
+            break;
+          }
+          case "publish_start":
+            body.insertAdjacentHTML("beforeend",
+              `<div class="log run"><div class="log-h"><span class="ic">🚀</span><span class="nm">publishing</span>
+               <span class="ar">${esc(ev.backend || "")} · ${esc(ev.dir || "")}${ev.auto ? " (automatic)" : ""}</span></div></div>`);
+            toBottom();
+            break;
+          case "publish_log":
+            body.insertAdjacentHTML("beforeend",
+              `<div class="log"><div class="log-h"><span class="ic">🚀</span><span class="nm">publisher</span>
+               <span class="ar">${esc(String(ev.text || "").slice(0, 120))}</span></div></div>`);
+            toBottom();
+            break;
       case "critic":
         if (ev.level === "ok") break;
         body.insertAdjacentHTML("beforeend",
@@ -1313,3 +1367,43 @@ async function startGemini() {
     }
   });
 }
+/* ---- hosting: where published sites go, and what is configured ---- */
+const PUBUI = { last: null, info: null };
+async function loadPublish(force = false) {
+  if (PUBUI.info && !force) return PUBUI.info;
+  try { PUBUI.info = await (await fetch("/api/publish")).json(); } catch { PUBUI.info = null; }
+  const info = PUBUI.info;
+  const lbl = $("#publishLbl"), dot = $("#publishDot");
+  if (!info) { lbl.textContent = "publish"; dot.classList.remove("live"); return null; }
+  const ready = info.ready || [];
+  lbl.textContent = ready.length ? ready[0].label.toLowerCase() : "publish";
+  dot.classList.toggle("live", ready.length > 0);
+  $("#publishBtn").title = ready.length
+    ? `Auto-publish on · ${ready.map((b) => b.label).join(", ")}`
+    : "No host configured — set VERCEL_TOKEN or a Render deploy hook";
+  return info;
+}
+function renderPublishSheet() {
+  const box = $("#publishBody"), info = PUBUI.info;
+  const last = PUBUI.last;
+  if (!box) return;
+  const rows = (info?.backends || []).map((b) => `
+    <div class="pv-row ${b.ready ? "on" : ""}">
+      <span class="pv-dot"></span><b>${esc(b.label)}</b>
+      <span class="pv-env">${esc(b.env)}</span>
+      <span class="pv-state">${b.ready ? "configured" : esc(b.hint || "not configured")}</span>
+    </div>`).join("");
+  box.innerHTML = `
+    <div class="pv-note">Every website the agent builds is published automatically to the first configured host.
+      ${info?.autoPublish === false ? "<b>Auto-publish is switched off</b> (NEXUS_AUTO_PUBLISH=false)." : ""}</div>
+    ${rows || '<div class="pv-note">Loading…</div>'}
+    <div class="pv-note">Add one of these to <code>.env</code> and restart to enable publishing.</div>
+    ${last ? `<div class="pv-last">Last: ${last.ok ? `<a href="${last.url}" target="_blank" rel="noopener">${esc(last.url)}</a>` : esc(last.error || "failed")}</div>` : ""}`;
+}
+$("#publishBtn").onclick = async () => {
+  PUBUI.info = null;
+  await loadPublish(true);
+  renderPublishSheet();
+  $("#publishSheet").classList.add("open");
+};
+loadPublish();

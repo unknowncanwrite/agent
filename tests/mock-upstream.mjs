@@ -16,7 +16,8 @@ const MODELS = [
 ];
 
 export function startMock({ port = 0 } = {}) {
-  const state = { mode: "text", requests: [], counters: {}, failModels: [], hangModels: [], delayMs: 0 };
+  const state = { mode: "text", requests: [], counters: {}, failModels: [], hangModels: [], delayMs: 0,
+                  deployments: [], hooks: 0, renderDeploys: [] };
   const ctl = { get mode() { return state.mode; }, get requests() { return state.requests; }, state };
 
   const server = http.createServer(async (req, res) => {
@@ -32,9 +33,14 @@ export function startMock({ port = 0 } = {}) {
       res.writeHead(200, { "content-type": "application/json" });
       return res.end(JSON.stringify(state.requests));
     }
+    if (url.pathname === "/__deployments") {
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify(state.deployments));
+    }
     if (url.pathname === "/__reset") {
       state.requests = []; state.counters = {}; state.mode = "text";
       state.failModels = []; state.hangModels = []; state.delayMs = 0;
+      state.deployments = []; state.hooks = 0; state.renderDeploys = [];
       res.writeHead(200); return res.end("ok");
     }
 
@@ -62,6 +68,29 @@ export function startMock({ port = 0 } = {}) {
       if (state.hangModels.includes(payload.model)) return;      // never answer
       if (state.delayMs) await sleep(state.delayMs);
       return handleCompletion(req, res, payload, n, state);
+    }
+
+    // ---- fake hosting APIs (used by the publish tests) ----
+    if (url.pathname === "/v13/deployments" && req.method === "POST") {
+      const dep = JSON.parse(body || "{}");
+      state.deployments.push({ name: dep.name, target: dep.target, projectSettings: dep.projectSettings,
+        files: (dep.files || []).map((f) => ({ file: f.file, encoding: f.encoding, bytes: String(f.data || "").length })) });
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ id: "dpl_mock_" + state.deployments.length, url: `${dep.name}-mock.vercel.app`, readyState: "READY" }));
+    }
+    if (url.pathname === "/hook" && req.method === "POST") {
+      state.hooks++;
+      res.writeHead(200, { "content-type": "text/plain" });
+      return res.end("deploy hook triggered");
+    }
+    if (/^\/v1\/services\/[^/]+$/.test(url.pathname) && req.method === "GET") {
+      res.writeHead(200, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ id: "srv_mock", name: "demo-site", serviceDetails: { url: "demo-site.onrender.com" } }));
+    }
+    if (/^\/v1\/services\/[^/]+\/deploys$/.test(url.pathname) && req.method === "POST") {
+      state.renderDeploys.push(JSON.parse(body || "{}") || {});
+      res.writeHead(202, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ id: "dep_mock_" + state.renderDeploys.length }));
     }
 
     res.writeHead(404, { "content-type": "application/json" });
@@ -156,6 +185,16 @@ function planFor(payload, n, state) {
     case "agent-unknown-tool":
       if (toolResults.length === 0) return { tool_calls: [{ name: "do_magic", args: {} }] };
       return { content: "tool error handled" };
+
+    case "agent-site":
+      if (toolResults.length === 0) {
+        return { tool_calls: [{ name: "write_file", args: { path: "index.html", content:
+          "<!doctype html><html><head><title>Mock Site</title></head><body><h1>hello from the mock site</h1></body></html>\n" } }] };
+      }
+      if (!toolResults.some((m) => m.name === "run_command")) {
+        return { tool_calls: [{ name: "run_command", args: { command: "ls -la index.html" } }] };
+      }
+      return { content: "Built and verified the landing page." };
 
     case "agent-ask":
       if (toolResults.length === 0) {

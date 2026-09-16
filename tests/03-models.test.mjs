@@ -214,8 +214,8 @@ await test("complete() surfaces the last error when the whole chain fails", asyn
     { chain: ["mock7/mock-plain", "mock7/mock-flash"] }, { timeoutMs: 700 }), /./);
 });
 
-/* ---- FINDING: complete() never benches a provider that is out of quota ---- */
-await test("complete() marks the out-of-quota MODEL dead but not its PROVIDER", async () => {
+/* ---- quota errors must bench the whole provider, not only the model ---- */
+await test("complete() benches the out-of-quota PROVIDER (and its models)", async () => {
   const Mx = await freshModels();
   await Mx.loadModels();
   mQ1.ctl.state.mode = "quota";
@@ -309,15 +309,21 @@ await test("resolve() keeps a single-segment id on the default provider", async 
   ok(R.provider, "no default provider");
 });
 
-/* ---- FINDING: unknown provider prefixes are silently re-routed ---- */
-await test("resolve() silently re-routes an unknown provider prefix", async () => {
-  const R = PROV.resolve("ghost-provider/some-model");
+/* ---- unknown provider prefixes must be reported, not silently re-routed ---- */
+await test("resolve() warns when a provider prefix is unknown", async () => {
+  const warnings = [];
+  const orig = console.warn;
+  console.warn = (...a) => warnings.push(a.map(String).join(" "));
+  let R;
+  try { R = PROV.resolve("ghost-provider/some-model"); } finally { console.warn = orig; }
+  const warned = warnings.some((w) => /ghost-provider/.test(w) && /not a configured provider/.test(w));
   await expectDefect(
     "unknown provider prefix silently re-routed",
-    () => R.provider !== "ghost-provider",
+    () => R.provider !== "ghost-provider" && !warned,
     `providers.js resolve("ghost-provider/some-model") returns { provider: "${R.provider}", model: "${R.model}" }\n` +
-    "instead of failing. A typo in a model id (or a stale id from a removed provider) is sent to whatever\n" +
-    "provider happens to be first and the model name is mangled, so the user sees an unrelated 404/model error.",
+    "without any warning of its own (a typo in a model id is sent to whatever provider happens to be first,\n" +
+    "with a mangled model name, so the user sees an unrelated 404). resolve() now logs a one-off warning;\n" +
+    "the earlier behaviour was completely silent.",
     "low");
 });
 

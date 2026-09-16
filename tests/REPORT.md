@@ -4,15 +4,33 @@
 public deployment `https://agent-3tll.onrender.com` is serving.
 **Suite:** `tests/` (see `tests/README.md`), developed on branch `arena/01a0a92f-agent`.
 **Run:** `cd /home/user/agent && node tests/run.mjs`
-**Result:** **154 passed, 0 failed, 15 findings** (86 s, no network required).
+**Result:** **183 passed, 0 failed, 6 findings** (87 s, no network required).
 
 | suite | passed | failed | findings |
 |---|---:|---:|---:|
-| 01 static | 11 | 0 | 3 |
-| 02 units | 66 | 0 | 0 |
-| 03 models | 30 | 0 | 2 |
-| 04 server (end-to-end) | 31 | 0 | 2 |
-| 05 security | 16 | 0 | 8 |
+| 01 static | 14 | 0 | 0 |
+| 02 units | 67 | 0 | 0 |
+| 03 models | 32 | 0 | 0 |
+| 04 server (end-to-end) | 35 | 0 | 0 |
+| 05 security | 17 | 0 | 7 |
+| 06 publish | 18 | 0 | 0 |
+
+**Updated after the second pass.** Nine findings were fixed (the tests that proved them now
+report `✓ (fixed)` and keep guarding the behaviour), and the new auto-publish feature was
+added with its own suite. The **only** findings left are the security model itself, which the
+owner has explicitly decided to keep open (personal machine, personal link):
+
+| # | severity | finding | status |
+|---|---|---|---|
+| 1 | critical | unauthenticated arbitrary file read (`AGENT_FULL_ACCESS=true`) | open by decision |
+| 2 | critical | unauthenticated arbitrary file write | open by decision |
+| 3 | critical | unauthenticated remote shell (`POST /api/term`) | open by decision |
+| 4 | high | no authentication on any endpoint | open by decision |
+| 9 | medium | `hooks.json` is remotely writable and executed | open by decision |
+| 14 | low | API key preview published on `/api/health` + `/api/logs` | open by decision |
+
+Everything below is kept for the record: it is the state the first pass found, with the
+fix status noted per item.
 
 Findings are defects the suite *proves* and reports with a severity instead of failing the
 run (`expectDefect`), so the same suite is green before and after each fix — a fixed
@@ -46,8 +64,9 @@ defect shows up as `✓ (fixed)`.
   checkpoints; `skills/` are markdown methodologies the agent can load; `mcp.js` attaches
   external MCP servers; `selfedit.js` lets it patch its own source.
 * **Safety model.** One switch: `agent.js:resolvePath()` jails every path to
-  `AGENT_WORKSPACE` unless `AGENT_FULL_ACCESS=true`; `shell.js` has a short regex block
-  list; there is **no authentication anywhere**.
+  `AGENT_WORKSPACE` unless `AGENT_FULL_ACCESS=true`; `shell.js` has a regex block list (since
+  this pass, a verb × protected-target set rather than six one-liner patterns); there is **no
+  authentication anywhere** — a deliberate choice for a personal machine (see §3).
 
 ## 2. How it was tested
 
@@ -64,23 +83,58 @@ defect shows up as `✓ (fixed)`.
 
 ## 3. Findings
 
-| # | severity | finding | suite |
-|---|---|---|---|
-| 1 | **critical** | unauthenticated arbitrary file read (`AGENT_FULL_ACCESS=true`) | 05 |
-| 2 | **critical** | unauthenticated arbitrary file write | 05 |
-| 3 | **critical** | unauthenticated remote shell (`POST /api/term`) | 05 |
-| 4 | **high** | no authentication on any endpoint | 05 |
-| 5 | high | no `.gitignore` — `.env`/state can be committed | 01 |
-| 6 | medium | `complete()` never benches an out-of-quota provider | 03 |
-| 7 | medium | uncaught `ERR_STREAM_WRITE_AFTER_END` from an SSE endpoint | 04 |
-| 8 | medium | shell guard misses destructive commands | 05 |
-| 9 | medium | `hooks.json` is remotely writable and executed | 05 |
-| 10 | medium | `.env.example` missing though the UI/docs tell you to copy it | 01 |
-| 11 | low | `START-MAC-LINUX.sh` documented as runnable, committed as `100644` | 01 |
-| 12 | low | unknown provider prefix silently re-routed | 03 |
-| 13 | low | `POST /api/ws/reset` leaves stale caches | 04 |
-| 14 | low | API key preview exposed to anonymous clients | 05 |
-| 15 | low | destructive commands outside the guard list run in full-access mode | 05 |
+Legend: **open by decision** = the owner keeps the open/full-access design on purpose;
+**fixed** = patch applied in this branch.
+
+| # | severity | finding | suite | status |
+|---|---|---|---|---|
+| 1 | **critical** | unauthenticated arbitrary file read (`AGENT_FULL_ACCESS=true`) | 05 | open by decision |
+| 2 | **critical** | unauthenticated arbitrary file write | 05 | open by decision |
+| 3 | **critical** | unauthenticated remote shell (`POST /api/term`) | 05 | open by decision |
+| 4 | **high** | no authentication on any endpoint | 05 | open by decision |
+| 5 | high | no `.gitignore` — `.env`/state can be committed | 01 | **fixed** |
+| 6 | medium | `complete()` never benches an out-of-quota provider | 03 | **fixed** |
+| 7 | medium | uncaught `ERR_STREAM_WRITE_AFTER_END` from an SSE endpoint | 04 | **fixed** |
+| 8 | medium | shell guard misses destructive commands | 05 | **fixed** |
+| 9 | medium | `hooks.json` is remotely writable and executed | 05 | open by decision |
+| 10 | medium | `.env.example` missing though the UI/docs tell you to copy it | 01 | **fixed** |
+| 11 | low | `START-MAC-LINUX.sh` documented as runnable, committed as `100644` | 01 | **fixed** |
+| 12 | low | unknown provider prefix silently re-routed | 03 | **fixed** (warns now) |
+| 13 | low | `POST /api/ws/reset` leaves stale caches | 04 | **fixed** |
+| 14 | low | API key preview exposed to anonymous clients | 05 | open by decision |
+| 15 | low | destructive commands outside the guard list run in full-access mode | 05 | **fixed** |
+
+### What the fixes were (11 items, 6 files)
+
+* **4 → kept open on purpose.** *The owner uses this on a personal machine behind a personal
+  link and asked for the open design to stay: no auth middleware, `HOST=0.0.0.0`,
+  `AGENT_FULL_ACCESS=true`, key preview and all.* Nothing about the access model was changed.
+* **5 `.gitignore`** — added (`.env`, `.memory/`, `workspace/`, `uploads/`, `providers.json`,
+  `.providers-off.json`, `node_modules/`, caches).
+* **10 `.env.example`** — added, documenting the model keys, server settings, access switches
+  and every hosting variable.
+* **11 launcher mode** — `START-MAC-LINUX.sh` is now committed as `100755`.
+* **6 quota bench** (`models.js`) — `complete()` now calls `markProviderDead(model)` on a quota
+  error, matching `streamWithFailover()`: once a free tier is exhausted the model picker stops
+  ranking that provider's models instead of re-discovering the 429 on every call.
+* **7 SSE write-after-end** (`jobs.js`) — `attach()` no longer sends a synthetic `job_end` when
+  the replay already ended with one. Reconnecting to a finished task no longer triggers an
+  uncaught `ERR_STREAM_WRITE_AFTER_END` that only the global handler survived.
+* **13 stale caches** (`server.js`) — `POST /api/ws/reset` now calls `invalidateCache()`, so
+  `/api/ws/tree` and `read_file` stop listing/serving files that were just deleted.
+* **12 provider prefixes** (`providers.js`) — `resolve()` logs a one-off warning naming the
+  unknown prefix, the id, and the known providers (it used to re-route in complete silence).
+  It still routes rather than throwing, because valid ids such as `qwen/…:free` also carry a
+  slash, and throwing would break the documented fallback chain.
+* **8 + 15 shell guard** (`shell.js`) — the block list was rewritten from six patterns to a
+  set of *verb × protected-target* rules. Now refused: `rm -rf ~/`, `rm -rf /`, `rm -rf /etc/…`,
+  `rm -f /etc/passwd`, `shutil.rmtree(...)`, `find / … -delete`, `find /etc … -exec rm`,
+  `curl … | bash`, `mv`/`cp`/`ln`/`rsync` from `/etc|/usr|/bin|/boot|/var|/opt|/root|…`,
+  `truncate`/`shred`/`chattr` on those trees, `chmod -R` / `chown -R` on them, redirects into
+  them, and `sudo rm -rf $HOME`. The tests pin the *allowed* side too — `rm -rf ./build`,
+  `rm -rf ~/Downloads/junk`, `cp -r dist ~/Desktop/site`, `mv app.js app.bak`,
+  `find . -name '*.log' -delete`, `rsync -a dist/ /tmp/site/`, `curl … | head` — so ordinary
+  work on the user's own machine never gets blocked.
 
 ### 1–3 · The public deployment is an open remote shell (critical)
 
@@ -186,7 +240,7 @@ and confirmed both the marker and that a failing `before_write` hook also blocks
 next write. This is remote persistence: it survives restarts and runs on every future
 write. Fix: auth (see #4), and require an explicit allow-list for hook commands.
 
-### 10–15 · Smaller issues
+### 10–15 · Smaller issues (fix status in the table above)
 
 * **(10) `.env.example` missing.** `models.js` and the README tell the user to copy it; it
   does not exist, so every variable name has to be guessed. Ship one.
@@ -230,6 +284,7 @@ write. Fix: auth (see #4), and require an explicit allow-list for hook commands.
 * **The default configuration is a real jail.** In the sandboxed server every escape attempt
   was refused: absolute/traversal reads and writes, `../` upload filenames (sanitised to a
   basename inside `uploads/`), and `/api/term` with a `cwd` outside the workspace.
+* **Publishing** (new): site detection, build, upload and the URL card are covered in §6b.
 * **Units:** `runStream` exit codes/timeouts/live streaming/blocked-command refusal (126),
   memory remember/recall/forget/notes/sessions/stats/context, router heuristics, all eight
   supervisor detectors, hooks firing with `$TOOL`/`$FILE` and blocking on failure,
@@ -273,13 +328,58 @@ reproduces them in a sandbox because the suite cannot reach the host from here
 * Findings are *proved* but individual severities are judgement calls; the security block
   (1–4, 8, 9) matters far more than the convenience issues (10–15).
 
-## 7. Suggested order of work
+## 6b. Auto-publish (new feature, suite 06)
 
-1. Token auth middleware + default `HOST=127.0.0.1` (fixes 1–4, 9).
-2. Turn `AGENT_FULL_ACCESS` off on the deployment, and decouple HTTP file endpoints from it.
-3. `.gitignore` + `.env.example`, and rotate any key that has been committed (5, 10).
-4. The two real bugs: `markProviderDead` in `complete()` (6) and the double `job_end`
-   in `jobs.js:attach()` (7).
-5. `invalidateCache()` in `/api/ws/reset`, drop `keyPreview`, `chmod +x` the launcher,
-   fail loudly on unknown provider prefixes (12–14).
-6. Extend the shell block list last — auth is the control, the regex is only a seatbelt (8, 15).
+Requested: *"whenever it makes a website it should auto publish on render or vercel, whatever
+possible"*. Implemented as `publish.js` + a `publish_website` tool + an automatic step at the
+end of any run that produced a site.
+
+**Pipeline** — `detectSite()` finds the site (an `index.html`, or a `package.json` with a
+`build` script), `buildSite()` runs `npm install` when the project has dependencies and
+`npm run build`, `collect()` packs the output (skips `node_modules`, source maps, dot-files,
+anything >5 MB, caps at 800 files; binaries are base64-encoded), then the first configured
+backend deploys it.
+
+**Backends** (first ready one wins; `publish_website({backend})` can force one):
+
+| backend | credentials | how |
+|---|---|---|
+| Vercel | `VERCEL_TOKEN` | `POST /v13/deployments` with the files inline → `https://<name>.vercel.app` |
+| Render | `RENDER_DEPLOY_HOOK_URL`, or `RENDER_API_KEY`+`RENDER_SERVICE_ID` | triggers the deploy hook / `POST /v1/services/:id/deploys` |
+| GitHub Pages | `PUBLISH_GITHUB_REPO=owner/repo` | contents API through an authenticated `gh`, then enables Pages |
+
+**When it runs** — a run may only publish a site it *created itself*: `siteFromWritten()`
+intersects the run's written files with candidate site roots, so re-running an unrelated task
+never re-deploys an old project. Publishes are streamed to the UI as `publish_start` /
+`publish_log` / `publish` events (live and on reattach) and end with a clickable URL card; the
+loop also injects `[PUBLISHER] …` into the conversation so the final answer links the URL.
+Nothing configured → the run serves the site on `localhost`, says which variable to set, and
+the Hosting sheet (new chip in the header, backed by `GET /api/publish`) shows what is ready.
+`NEXUS_AUTO_PUBLISH=false` switches off the automatic step; `NEXUS_FORCE_BUILD=true` forces a
+rebuild even when a previous build output exists.
+
+**Suite 06** proves all of it offline against the mock's fake hosting APIs (18 tests):
+detection of static and node sites, project-name sanitising, the fresh-files-only rule, a real
+`npm run build`, a broken build being reported instead of deploying stale output, the exact
+Vercel request body (files, encodings, `target: production`), Render hook vs API, the
+`gh`-missing path, and the tool's fallbacks. Suite 04 additionally runs the whole loop end to
+end and asserts a deployment actually reaches the (mock) Vercel API.
+
+**To switch it on for the deployment:** set `VERCEL_TOKEN` (easiest — create a token, no CLI
+needed) or `RENDER_DEPLOY_HOOK_URL` in the Render service's environment variables. Nothing else
+in the app needs to change.
+
+## 7. Remaining work
+
+Items 5–13 and 15 are done (see §3). What is left is a decision, not a bug list:
+
+1. **Items 1–4, 9, 14 stay open by the owner's explicit choice** — this runs on a personal
+   machine behind a personal link, and the open design is wanted. If the URL is ever shared or
+   the host changes, run `NEXUS_LIVE=<url> node tests/run.mjs 05` and treat findings 1–4 as
+   blocking.
+2. **Rotate the key if the repo is ever pushed with the working `.env`** — the new
+   `.gitignore` prevents it from here on, but history is history.
+3. **Add a token only if the deployment goes public** — the middleware sketched in §1 is ~6
+   lines in `server.js` and the suite's `OPEN_ENDPOINTS` probe verifies it in one run.
+4. Optional polish: the guard is a seatbelt, not a sandbox — anything it does not model still
+   runs, which is the point on a machine you own.

@@ -64,7 +64,7 @@ await expectDefect(
   "low");
 
 await test("no real credentials are committed", async () => {
-  const files = (await fsp.readdir(APP_DIR)).filter((f) => /\.(js|json|md|sh|bat|py)$/.test(f));
+  const files = (await fsp.readdir(APP_DIR)).filter((f) => /\.(js|json|md|sh|bat|py)$/.test(f) && f !== ".env.example");
   const hits = [];
   for (const f of files) {
     if (f === "package-lock.json") continue;

@@ -3,7 +3,7 @@ import express from "express";
 import path from "node:path";
 import fsp from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { runAgent, makeImpl, ROOT, APP_DIR, killAll, PROCS, resolvePath } from "./agent.js";
+import { runAgent, makeImpl, ROOT, APP_DIR, killAll, PROCS, resolvePath, invalidateCache } from "./agent.js";
 import { client, loadModels, complete, chainFor, streamWithFailover, isQuota, needsBalance } from "./models.js";
 import { runStream, sysInfo, isFull, setFullAccess } from "./shell.js";
 import { detectToolchain, ensureBrowser } from "./setup.js";
@@ -13,6 +13,7 @@ import * as MEM from "./memory.js";
 import * as MCP from "./mcp.js";
 import * as HOOK from "./hooks.js";
 import * as JOBS from "./jobs.js";
+import * as PUB from "./publish.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -355,6 +356,16 @@ app.post("/api/providers/add", async (req, res) => {
   } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+/* ---- hosting: what can a built site be published to? ---- */
+app.get("/api/publish", async (_req, res) => {
+  res.json({
+    backends: PUB.backends(),
+    ready: PUB.ready(),
+    autoPublish: String(process.env.NEXUS_AUTO_PUBLISH ?? "true") !== "false",
+    primary: PUB.primary()?.id || null,
+  });
+});
+
 /* ---- artifact download ---- */
 app.get("/api/download", (req, res) => {
   try {
@@ -421,6 +432,7 @@ app.post("/api/ws/reset", async (_req, res) => {
   killAll();
   await fsp.rm(ROOT, { recursive: true, force: true });
   await fsp.mkdir(ROOT, { recursive: true });
+  invalidateCache();                     // otherwise /api/ws/tree + read_file serve the deleted files
   res.json({ ok: true });
 });
 

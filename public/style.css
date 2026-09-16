@@ -334,6 +334,10 @@ body{background:var(--bg);color:var(--txt);font:15px/1.6 var(--ff);overflow:hidd
 .artifact{display:flex;align-items:center;gap:13px;margin:10px 0;padding:14px 16px;border-radius:14px;
   border:1px solid var(--acc3);background:linear-gradient(135deg,#3ddc9718,transparent);backdrop-filter:blur(12px)}
 .art-ic{font-size:24px}
+.artifact.publish{border-color:#5b9dff55;background:linear-gradient(135deg,#5b9dff1f,transparent)}
+.artifact.publish .art-path a{color:#7db4ff;text-decoration:none;font-size:13px;word-break:break-all}
+.artifact.publish .art-path a:hover{text-decoration:underline}
+
 .art-body{flex:1;min-width:0}
 .art-body b{font-size:14px}
 .art-path{font:11px var(--fm);color:var(--muted);margin-top:3px;word-break:break-all}
@@ -507,3 +511,13 @@ body.sw-open #stage{margin-right:410px}
   background:#fff;border-radius:50%;transition:.2s}
 .psw input:checked+span{background:var(--acc3)}
 .psw input:checked+span:before{transform:translateX(15px)}
+
+/* ---- hosting sheet ---- */
+.pv-row{display:flex;align-items:center;gap:9px;padding:9px 4px;border-bottom:1px solid var(--line,#ffffff14);font-size:13px}
+.pv-dot{width:8px;height:8px;border-radius:50%;background:#6b7280;flex:0 0 auto}
+.pv-row.on .pv-dot{background:#3ddc97;box-shadow:0 0 8px #3ddc9790}
+.pv-env{font-family:ui-monospace,Menlo,monospace;font-size:11px;opacity:.7;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pv-state{font-size:11px;opacity:.65;text-align:right;max-width:45%}
+.pv-note{font-size:12px;opacity:.7;margin:10px 4px}
+.pv-last{margin-top:12px;font-size:13px}
+.pv-last a{color:#7db4ff}

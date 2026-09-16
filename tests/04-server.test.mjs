@@ -13,7 +13,8 @@ const setMode = async (mode, extra = {}) =>
   (await fetch(mock.url.replace(/\/v1$/, "") + "/__ctl", { method: "POST", body: JSON.stringify({ mode, ...extra }) })).json();
 
 const dir = await makeSandbox({ name: "nexus-server", providersOff: [] });
-const S = await startServer(dir, { upstream: mock.url, fullAccess: false });
+const S = await startServer(dir, { upstream: mock.url, fullAccess: false,
+  env: { VERCEL_TOKEN: "vc-test-token", VERCEL_API_BASE: mock.url.replace(/\/v1$/, "") } });
 const WS = path.join(dir, "workspace");
 
 try {
@@ -291,11 +292,12 @@ try {
     await get(S.base, "/api/ws/tree?dir=.");                 // prime the tree cache
     eq((await get(S.base, "/api/ws/file?path=stale.txt")).json.content, "stale-content"); // prime the read cache
     await post(S.base, "/api/ws/reset", {});
+    // give a TTL cache a fair chance to serve stale data
     const tree = await get(S.base, "/api/ws/tree?dir=.");
     const file = await get(S.base, "/api/ws/file?path=stale.txt");
     await expectDefect(
       "workspace reset leaves stale caches",
-      () => tree.text.includes("stale.txt") || file.status === 200,
+      () => tree.text.includes("stale.txt") || (file.status === 200 && file.text.includes("stale-content")),
       "POST /api/ws/reset deletes every file but never calls invalidateCache(), so the module-level\n" +
       "TTLCaches in agent.js keep answering for the deleted tree (8s) and deleted files (~15s):\n" +
       `  • /api/ws/tree still lists "stale.txt": ${tree.text.includes("stale.txt")}\n` +
@@ -335,6 +337,38 @@ try {
       eq(r.status, 200, `${p} returned ${r.status}: ${r.text.slice(0, 120)}`);
       ok(r.json !== null, `${p} did not return JSON`);
     }
+  });
+
+  await test("GET /api/publish reports the hosting backends", async () => {
+    const r = await get(S.base, "/api/publish");
+    eq(r.status, 200);
+    eq(r.json.ready.map((b) => b.id), ["vercel"]);
+    eq(r.json.autoPublish, true);
+    eq(r.json.primary, "vercel");
+  });
+
+  await test("a run that builds a website publishes it automatically", async () => {
+    const origin = mock.url.replace(/\/v1$/, "");
+    await fetch(origin + "/__reset", { method: "POST" });
+    await setMode("agent-site");
+    const { events } = await sse(S.base, "/api/smart",
+      { messages: [{ role: "user", content: "build me a landing page website" }], chatId: "site-auto", forceAgent: true },
+      { until: (e) => e.type === "job_end" || e.type === "error", timeout: 60000 });
+
+    const pub = evs(events, "publish").at(-1);
+    ok(pub, "no publish event: " + JSON.stringify(events.map((e) => e.type)));
+    eq(pub.ok, true, "publishing failed: " + JSON.stringify(pub.error));
+    eq(pub.auto, true, "the publish should be marked automatic");
+    eq(pub.backend, "vercel");
+    has(pub.url, "vercel.app");
+    ok(evs(events, "publish_start").length >= 1, "no publish_start event");
+    ok(evs(events, "publish_log").length >= 1, "the publish progress was not streamed");
+
+    const deps = await (await fetch(origin + "/__deployments")).json();
+    eq(deps.length, 1, "expected exactly one deployment");
+    has(deps[0].files.map((f) => f.file).join(","), "index.html", "the page was not uploaded");
+    has(await fsp.readFile(path.join(WS, "index.html"), "utf8"), "mock site");
+    eq(evs(events, "job_end").at(-1)?.status, "done");
   });
 
   await test("POST /api/agent runs the loop directly too", async () => {
