@@ -243,9 +243,12 @@ Direct probes of `https://agent-3tll.onrender.com` (this sandbox's own egress to
 blocked, so these come from the platform's HTTP fetcher, not from the test suite):
 
 * `/api/health` → ok, key present, upstream reachable, **175 models (167 free)** via
-  `https://api.xkiro.com/v1`.
-* `/api/system` → **`fullAccess: true`** on a public host.
-* `/api/download?path=/etc/passwd` → **the file was returned**.
+  `https://api.xkiro.com/v1`, and it publishes `keyPreview` (first 8 + last 4 chars of the
+  live key) to the anonymous caller — finding 14 is live too.
+* `/api/system` → **`fullAccess: true`** on a public host (user `render`, app dir
+  `/opt/render/project/src`, Chromium present in the Playwright cache).
+* `/api/download?path=/etc/passwd` → **the whole file was returned** (re-verified while
+  writing this report).
 * `/api/ws/tree?dir=.` → a previously generated `todo-app/` + `todo.md` in the workspace.
 * `/api/os/status` → `pyautogui` not installed there (desktop tools unavailable);
   `/api/android/status` → no JDK/SDK; `/api/gemini/status` → up.
