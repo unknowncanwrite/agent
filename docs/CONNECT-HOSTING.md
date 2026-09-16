@@ -1,5 +1,17 @@
 # Connect hosting so the agent can publish sites
 
+**Two things to do** (5 minutes total):
+
+1. **Deploy the new code** — the live app still serves the old build (`/api/publish` → 404).
+   Merge [PR #1](https://github.com/unknowncanwrite/agent/pull/1), or point the Render service
+   at this branch *(Settings → Build & Deploy → Branch)*. Details in
+   [Deploy the new code first](#deploy-the-new-code-first-needed-for-the-publish-feature).
+2. **Connect one host** — easiest is Vercel: create a token at
+   <https://vercel.com/account/tokens> and add it as `VERCEL_TOKEN` to the app's environment
+   (Render → Environment; locally in `.env`). Details in [Option A](#option-a--vercel-recommended-2-minutes).
+
+Then ask the agent for any website — it publishes itself and shows the link. Nothing else to click.
+
 The agent publishes to the **first configured** host. You only need one. Set the variable
 wherever the app reads its environment:
 
@@ -94,6 +106,32 @@ Then confirm the new build is live:
 curl -s https://<your-app>.onrender.com/api/publish | head -c 400
 # → {"backends":[{"id":"vercel","label":"Vercel","ready":false,…}],…}
 ```
+
+## Test it end-to-end without touching the app (live probe workflow)
+
+`.github/workflows/live-probe.yml` is a smoke test that runs on GitHub's runners against the
+**real** deployment over the open internet:
+
+* wakes the service (free tier hibernates), reads `/api/health`, `/api/system`, `/api/publish`
+* sends a real task (`create live-test.txt …`) through `POST /api/smart`, then verifies the file
+  with `/api/ws/file` and the run through `/api/jobs`
+* drives the **UI in a real browser** (Playwright): loads the page, types a message, waits for the
+  streamed answer, screenshots it
+* **only when a publish backend is configured**: builds a page, publishes it, and fetches the
+  returned URL to prove it is live
+* prints the key facts as annotations and uploads the JSON/SSE/screenshots as a run artifact
+
+Run it from **Actions → "live smoke test (deployment)" → Run workflow**, or push any change to
+the workflow file. First live runs: 6/6 passed (see
+[the latest run](https://github.com/unknowncanwrite/agent/actions/workflows/live-probe.yml)).
+Evidence archive: enable *Settings → Actions → General → Workflow permissions → Read and write*
+and the probe also mirrors its files to the `live-probe-results` branch.
+
+Additional notes:
+
+* Point it at another domain by editing `BASE:` in the workflow (default
+  `https://agent-3tll.onrender.com`).
+* To keep the run artifacts download, you need to be signed in to GitHub (they are not public).
 
 ## Verify publishing works, once connected
 

@@ -320,7 +320,15 @@ Verified from the deployment itself afterwards:
 * `/api/publish` → `Cannot GET /api/publish`: the deployment still runs the `main` build, so
   the publish feature is **not** there yet (see `docs/CONNECT-HOSTING.md` for how to deploy it).
 * The probe reports `publish backends ready: none` — no host credential is configured on the
-  deployment yet, which is exactly what the new Hosting chip shows in the UI.
+  deployment yet, so the new Hosting chip will show "not connected" until one is added
+  (`docs/CONNECT-HOSTING.md`).
+
+**Browser pass (run 7):** a Playwright job loaded `https://agent-3tll.onrender.com` in headless
+Chromium, typed a message into `#input` and clicked `#sendBtn`. The page rendered (title `NEXUS`,
+header buttons, chat rail), the stop button appeared while running, and the answer **streamed into
+`.turn.ai .ai-body`** ("…*Reply with exactly this token and nothing else: UI-PROBE-mu49eez4*…")
+with **zero console/page errors**. The hosting chip is absent on that build (`present=false`) —
+same conclusion as `/api/publish` above: the deployment predates the publish feature.
 
 Operational note: the free Render instance hibernates. The first request of the day returned
 Render's "Application loading" page and the service needed ~60 s to come up (the workflow
