@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NEXUS</title>
+<link rel="stylesheet" href="/style.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◆</text></svg>" />
+</head>
+<body>
+
+<div id="aurora"><i></i><i></i><i></i></div>
+
+<div id="shell">
+
+  <!-- ░░ slim rail ░░ -->
+  <nav id="rail">
+    <div class="rail-top">
+      <button id="railToggle" class="rail-btn" title="Expand sidebar (Ctrl+B)">☰</button>
+      <span class="rail-brand">NEXUS</span>
+    </div>
+    <button id="newChat" class="rail-btn primary"><span class="ri">✚</span><span class="rl">New chat</span></button>
+    <input id="chatSearch" class="rail-search" placeholder="Search chats…" />
+    <div id="railChats" class="rail-chats"></div>
+    <div class="rail-foot">
+      <button id="railConnect" class="rail-btn"><span class="ri">🔗</span><span class="rl">Connectors</span></button>
+      <button id="railJarvis" class="rail-btn"><span class="ri">🤖</span><span class="rl">JARVIS</span></button>
+      <button id="railTheme" class="rail-btn"><span class="ri">◐</span><span class="rl">Theme</span></button>
+      <button id="railSettings" class="rail-btn"><span class="ri">⚙</span><span class="rl">Settings</span></button>
+    </div>
+  </nav>
+
+  <!-- ░░ the one view ░░ -->
+  <main id="stage">
+    <header id="bar">
+      <div class="bar-left">
+        <span class="logo">◆</span>
+        <b>NEXUS</b>
+        <span id="routePill" class="route-pill"></span>
+        <button id="swarmBtn" class="swarm-pill" title="Live agent activity">
+          <span class="sw-dot"></span><span id="swarmN">0</span> agents
+        </button>
+      </div>
+      <div class="bar-right">
+        <button id="modelBtn" class="chip" title="Model">
+          <span id="modelName">auto</span> <span class="caret">▾</span>
+        </button>
+        <span id="statusDot" class="status-dot" title="idle"></span>
+      </div>
+    </header>
+
+    <div id="feed">
+      <div id="hero">
+        <div class="hero-orb">◆</div>
+        <h1>What can I do for you?</h1>
+        <p>I can chat, write and run code, browse the web, and control your computer.</p>
+        <div id="chips" class="hero-chips"></div>
+      </div>
+    </div>
+
+    <footer id="composer">
+      <div id="attachBar" class="attach-bar"></div>
+      <div class="comp-wrap">
+        <input type="file" id="fileInput" multiple hidden />
+        <button id="attachBtn" class="comp-icon" title="Attach files or images">＋</button>
+        <textarea id="input" rows="1" placeholder="Ask anything, drop a file, or tell me what to do…"></textarea>
+        <button id="stopBtn" class="comp-send stop" style="display:none" title="Stop">■</button>
+        <button id="sendBtn" class="comp-send" title="Send">➤</button>
+      </div>
+      <div class="comp-meta">
+        <span id="metaLeft">Ready</span>
+        <span id="metaRight"></span>
+      </div>
+    </footer>
+  </main>
+</div>
+
+<!-- ░░ overlays ░░ -->
+<div id="modelSheet" class="sheet"><div class="sheet-inner">
+  <div class="sheet-head"><b>Model</b><input id="modelSearch" placeholder="search…" /><button class="sheet-x">✕</button></div>
+  <label class="sheet-row"><input type="checkbox" id="freeOnly" checked /> <span>Free models only</span></label>
+  <label class="sheet-row"><input type="checkbox" id="autoRoute" checked /> <span>Auto-pick model per task (recommended)</span></label>
+  <div class="sheet-head2">💻 Local models — no quota, no cost, fully private</div>
+  <div id="provList" class="prov-list"></div>
+  <div class="sheet-btns">
+    <button id="btnDetect" class="btn">🔍 Detect local servers</button>
+    <button id="btnLocalHelp" class="btn ghost">📖 How to install</button>
+  </div>
+  <div class="sheet-head2">☁️ Cloud providers — add a key for more models</div>
+  <div id="cloudList" class="prov-list"></div>
+  <div class="conn-custom" style="margin-top:8px">
+    <input id="cpId" placeholder="id e.g. myapi" />
+    <input id="cpUrl" placeholder="https://.../v1" />
+    <input id="cpKey" placeholder="api key" type="password" />
+    <button id="cpAdd" class="btn">Add</button>
+  </div>
+  <div id="localHelp" class="local-help" style="display:none"></div>
+  <div id="modelList" class="model-list"></div>
+</div></div>
+
+<div id="settingsSheet" class="sheet"><div class="sheet-inner">
+  <div class="sheet-head"><b>Settings</b><button class="sheet-x">✕</button></div>
+  <label class="sheet-row"><input type="checkbox" id="fullAccess" /> <span>🤖 JARVIS — full PC access</span></label>
+  <div class="sheet-note">Lets me read/write anywhere, launch apps, and control your mouse &amp; keyboard.</div>
+  <div class="sheet-row col"><span>Max agent steps <b id="msVal">40</b></span>
+    <input type="range" id="maxSteps" min="5" max="80" value="40" /></div>
+  <div class="sheet-head2">System</div>
+  <div id="sysBox" class="sys-box">loading…</div>
+  <div class="sheet-btns">
+    <button id="btnDiag" class="btn ghost">🩺 Diagnostics</button>
+    <button id="btnBrowser" class="btn ghost">⬇ Install Chromium</button>
+    <button id="btnOsCtl" class="btn ghost">🖱 Enable cursor control</button>
+  </div>
+  <div class="sheet-head2">Server logs</div>
+  <div id="logBox" class="log-box"></div>
+  <div class="sheet-btns"><button id="btnExport" class="btn ghost">↓ Export chats</button>
+    <button id="btnClear" class="btn ghost danger">🗑 Clear all</button></div>
+</div></div>
+
+<div id="connectSheet" class="sheet"><div class="sheet-inner">
+  <div class="sheet-head"><b>🔗 Connectors</b><button class="sheet-x">✕</button></div>
+  <div class="sheet-note">Give NEXUS access to your other tools. Each one adds its abilities to the agent.</div>
+  <div id="connList" class="conn-list"></div>
+  <div class="sheet-head2">Custom MCP server</div>
+  <div class="conn-custom">
+    <input id="mcpName" placeholder="name" />
+    <input id="mcpCmd" placeholder="command e.g. npx" />
+    <input id="mcpArgs" placeholder="args (space separated)" />
+    <button id="mcpAdd" class="btn">Connect</button>
+  </div>
+  <div id="connStatus" class="log-box" style="margin-top:10px"></div>
+</div></div>
+
+<div id="swarmPanel">
+  <div class="sw-head">
+    <b>🛡 Supervisor &amp; agents</b>
+    <span id="swPulse" class="sw-pulse" title="supervisor active"></span>
+    <button id="swPin" class="sw-mini" title="Keep open">📌</button>
+    <button id="swClose" class="sheet-x">✕</button>
+  </div>
+
+  <div class="sw-stats">
+    <div><b id="swChecks">0</b><span>checks</span></div>
+    <div><b id="swFlags">0</b><span>caught</span></div>
+    <div><b id="swFixes">0</b><span>auto-fixes</span></div>
+    <div><b id="swModel">—</b><span>critic</span></div>
+  </div>
+
+  <div class="sw-head2">Agents</div>
+  <div id="swList" class="sw-list"><div class="sw-empty">Idle — no agents running.</div></div>
+
+  <div class="sw-head2">Supervisor activity — live</div>
+  <div id="swCritic" class="sw-critic"><div class="sw-empty">CRITIC standing by.</div></div>
+</div>
+
+<div id="bootErr" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:999;
+  background:#2a1518;color:#ffd7db;border-top:1px solid #ff5d6c;padding:10px 14px;
+  font:12px ui-monospace,monospace;white-space:pre-wrap"></div>
+<div id="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>
