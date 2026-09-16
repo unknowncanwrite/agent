@@ -19,6 +19,9 @@ on:
         required: false
         default: "Create live-test.txt containing the output of `date -u` and the hostname, then run `cat live-test.txt` to verify it. Do not start servers, do not publish."
 
+permissions:
+  contents: write        # publishes the evidence to the live-probe-results branch
+
 jobs:
   probe:
     runs-on: ubuntu-latest
@@ -84,3 +87,24 @@ jobs:
             *.json
             sse.log
           if-no-files-found: ignore
+
+      # Artifacts are only downloadable with an authenticated session; mirror the same
+      # files to a results branch so anyone (or a script) can `git fetch` them.
+      - name: 5 · publish the evidence to the results branch
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/out && cp -f ./*.json sse.log /tmp/out/ 2>/dev/null || true
+          cd "$GITHUB_WORKSPACE"
+          git config user.email "actions@github.com"
+          git config user.name "live probe"
+          git checkout --orphan live-probe-results
+          git rm -r --cached . >/dev/null 2>&1 || true
+          rm -rf ./* .github 2>/dev/null || true
+          mkdir -p run-${{ github.run_number }}
+          cp -f /tmp/out/* run-${{ github.run_number }}/ 2>/dev/null || true
+          printf 'run %s\nbranch: %s\nsha: %s\n' "${{ github.run_number }}" "${{ github.ref_name }}" "${{ github.sha }}" > run-${{ github.run_number }}/RUN.txt
+          printf '# live probe results\n\nOne folder per run. Newest run: %s\n' "${{ github.run_number }}" > README.md
+          git add -A
+          git commit -q -m "live probe run ${{ github.run_number }} (${{ job.status }})" || true
+          git push -q --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" live-probe-results || echo "push failed"
