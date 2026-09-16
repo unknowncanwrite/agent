@@ -1,0 +1,35 @@
+{
+  "_comment": "Add MCP servers here. Restart NEXUS (or call reload) to connect them.",
+  "_examples": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/path/to/dir"
+      ],
+      "disabled": true
+    },
+    "github": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": ""
+      },
+      "disabled": true
+    },
+    "postgres": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://..."
+      ],
+      "disabled": true
+    }
+  },
+  "mcpServers": {}
+}

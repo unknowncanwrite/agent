@@ -1,0 +1,28 @@
+{
+  "name": "nexus-agent",
+  "version": "37.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node start.js",
+    "dev": "node server.js",
+    "setup": "node -e \"import('./setup.js').then(m=>m.ensureBrowser(t=>process.stdout.write(t)))\"",
+    "check": "node -e \"import('./selfedit.js').then(async m=>{const r=await m.selfTest();console.log(r.report);process.exit(r.ok?0:1)})\"",
+    "build": "node build.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "NEXUS — autonomous multi-model AI agent with vision, internet and full terminal access",
+  "dependencies": {
+    "@playwright/browser-chromium": "^1.63.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "jsdom": "^29.1.1",
+    "openai": "^6.49.0",
+    "playwright-core": "^1.63.0"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  }
+}

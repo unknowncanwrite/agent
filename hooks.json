@@ -1,0 +1,18 @@
+{
+  "_comment": "Run shell commands around agent events. $TOOL, $ARGS, $FILE, $EXIT are available.",
+  "_events": [
+    "before_tool",
+    "after_tool",
+    "before_write",
+    "after_write",
+    "session_start",
+    "session_end"
+  ],
+  "_example": {
+    "event": "after_write",
+    "match": "\\.js$",
+    "command": "npx prettier --write \"$FILE\"",
+    "disabled": true
+  },
+  "hooks": []
+}
