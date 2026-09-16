@@ -41,9 +41,12 @@ jobs:
           curl -sS -m 180 --retry 8 --retry-delay 10 --retry-all-errors "$BASE/api/health" | tee health.json; echo
           say "GET /api/system"
           curl -sS -m 120 --retry 4 --retry-delay 5 --retry-all-errors "$BASE/api/system" | tee system.json; echo
-          say "GET /api/publish (new endpoint — 404 means the old build is deployed)"
+          say "GET /api/publish (404 means the old build is still deployed)"
           curl -sS -m 60 -o publish.json -w 'status=%{http_code}\n' "$BASE/api/publish" || true
           cat publish.json 2>/dev/null; echo
+          ready=$(jq -r '(.ready // []) | map(.id) | join(",")' publish.json 2>/dev/null || echo "")
+          echo "::notice::publish backends ready: ${ready:-none}"
+          if [ -n "${ready:-}" ]; then echo "PUBLISH_READY=$ready" >> "$GITHUB_ENV"; fi
           say "GET /api/jobs before"
           curl -sS -m 60 "$BASE/api/jobs" | tee jobs-before.json; echo
 
@@ -59,6 +62,26 @@ jobs:
           echo
           echo "── event type counts ──"
           grep -o '"type":"[a-z_]*"' sse.log | sort | uniq -c | sort -rn || true
+
+      - name: 2b · build a site and publish it (only when a host is configured)
+        if: env.PUBLISH_READY != ''
+        run: |
+          set -uo pipefail
+          TASK="Build a single-file index.html landing page for a fictional coffee shop called Render Roast (inline CSS, no dependencies), verify it by writing it and running a quick command, then publish it so it goes live on a real URL."
+          printf '{"messages":[{"role":"user","content":%s}],"chatId":"live-publish-%s","forceAgent":true,"maxSteps":18}' \
+            "$(printf '%s' "$TASK" | jq -Rs .)" "${{ github.run_number }}" > payload-publish.json
+          timeout 1200 curl -sS -N -H 'content-type: application/json' --data @payload-publish.json \
+            "$BASE/api/smart" | tee sse-publish.log | grep --line-buffered -E '"type":"(publish_start|publish_log|publish|error|done|job_end)"' || true
+          echo
+          URL=$(grep -o '"type":"publish"[^}]*' sse-publish.log | grep -o '"url":"[^"]*"' | head -1 | sed 's/.*:"//;s/"//')
+          if [ -n "${URL:-}" ]; then
+            echo "::notice::published URL: $URL"
+            code=$(curl -sS -m 60 -o page.html -w '%{http_code}' "$URL" || echo 000)
+            echo "::notice::published URL status=$code bytes=$(wc -c < page.html)"
+            head -c 300 page.html
+          else
+            echo "::error::no publish URL in the stream — see sse-publish.log in the artifacts"
+          fi
 
       - name: 3 · verify what the agent actually produced
         run: |
@@ -96,6 +119,8 @@ jobs:
           path: |
             *.json
             sse.log
+            sse-publish.log
+            page.html
           if-no-files-found: ignore
 
       # Artifacts need an authenticated session to download; mirror the same files to a

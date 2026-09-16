@@ -28,14 +28,17 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024;   // Vercel inline limit; bigger files a
 export function backends() {
   const e = process.env;
   return [
-    { id: "vercel", label: "Vercel", ready: !!(e.VERCEL_TOKEN || "").trim(),
-      env: "VERCEL_TOKEN", hint: "https://vercel.com/account/tokens — set VERCEL_TOKEN" },
-    { id: "render", label: "Render",
+    { id: "vercel", label: "Vercel", rank: 1, ready: !!(e.VERCEL_TOKEN || "").trim(),
+      env: "VERCEL_TOKEN", console: "https://vercel.com/account/tokens",
+      hint: "Create a token, add it as VERCEL_TOKEN — deploys straight from the API" },
+    { id: "render", label: "Render", rank: 2,
       ready: !!(e.RENDER_DEPLOY_HOOK_URL || "").trim() || !!(e.RENDER_API_KEY || "").trim() && !!(e.RENDER_SERVICE_ID || "").trim(),
       env: "RENDER_DEPLOY_HOOK_URL (or RENDER_API_KEY + RENDER_SERVICE_ID)",
-      hint: "Render dashboard → your static site → Settings → Deploy Hook" },
-    { id: "github", label: "GitHub Pages", ready: !!(e.PUBLISH_GITHUB_REPO || "").trim(),
-      env: "PUBLISH_GITHUB_REPO=owner/repo", hint: "needs an authenticated `gh` CLI; set PUBLISH_GITHUB_REPO" },
+      console: "https://dashboard.render.com",
+      hint: "Your service → Settings → Deploy Hook → copy, add as RENDER_DEPLOY_HOOK_URL" },
+    { id: "github", label: "GitHub Pages", rank: 3, ready: !!(e.PUBLISH_GITHUB_REPO || "").trim(),
+      env: "PUBLISH_GITHUB_REPO=owner/repo", console: "https://github.com/settings/tokens",
+      hint: "Needs the `gh` CLI signed in; set PUBLISH_GITHUB_REPO to the repo to publish into" },
   ];
 }
 

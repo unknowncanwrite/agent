@@ -45,6 +45,7 @@ await test("with nothing configured, publish() explains what to set", async () =
   has(r.error, "no publish backend configured");
   eq(r.backends.length, 3, "the three backends should always be listed");
   ok(r.backends.every((b) => b.env && b.hint), "each backend must say which variable to set");
+  ok(r.backends.every((b) => b.console && b.console.startsWith("https://")), "each backend should link to where the credential comes from");
 });
 
 await test("backends() reports readiness from the environment", async () => {

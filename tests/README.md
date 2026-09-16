@@ -95,3 +95,8 @@ That adds one extra check that reports whether an anonymous caller can read
 `/etc/passwd` or get a shell on that host. It needs outbound network access (the
 sandbox this was developed in blocks it, so the live result recorded in
 `REPORT.md` comes from direct HTTP probes, not from this flag).
+
+> **First run in a fresh checkout:** `npm install` first — the suites import the app's real
+> `models.js`, which needs `openai` from `node_modules`. (In this sandbox `node_modules` is
+> not snapshotted, so it has to be reinstalled after a cold start; `npm install` uses the
+> local cache and takes a few seconds.)

@@ -513,10 +513,17 @@ body.sw-open #stage{margin-right:410px}
 .psw input:checked+span:before{transform:translateX(15px)}
 
 /* ---- hosting sheet ---- */
-.pv-row{display:flex;align-items:center;gap:9px;padding:9px 4px;border-bottom:1px solid var(--line,#ffffff14);font-size:13px}
+.pv-row{display:flex;align-items:flex-start;gap:9px;padding:11px 4px;border-bottom:1px solid var(--line,#ffffff14);font-size:13px}
+.pv-main{flex:1;min-width:0}
+.pv-top{display:flex;align-items:center;gap:8px}
+.pv-badge{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#3ddc97;border:1px solid #3ddc9755;border-radius:999px;padding:1px 7px}
+.pv-link{font-size:12px;color:#7db4ff;text-decoration:none;margin-left:auto}
+.pv-link:hover{text-decoration:underline}
+.pv-hint{font-size:11.5px;opacity:.6;margin-top:3px}
+.pv-btns{margin-top:12px}
 .pv-dot{width:8px;height:8px;border-radius:50%;background:#6b7280;flex:0 0 auto}
 .pv-row.on .pv-dot{background:#3ddc97;box-shadow:0 0 8px #3ddc9790}
-.pv-env{font-family:ui-monospace,Menlo,monospace;font-size:11px;opacity:.7;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pv-env{font-family:ui-monospace,Menlo,monospace;font-size:11px;opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pv-state{font-size:11px;opacity:.65;text-align:right;max-width:45%}
 .pv-note{font-size:12px;opacity:.7;margin:10px 4px}
 .pv-last{margin-top:12px;font-size:13px}

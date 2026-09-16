@@ -1389,16 +1389,24 @@ function renderPublishSheet() {
   if (!box) return;
   const rows = (info?.backends || []).map((b) => `
     <div class="pv-row ${b.ready ? "on" : ""}">
-      <span class="pv-dot"></span><b>${esc(b.label)}</b>
-      <span class="pv-env">${esc(b.env)}</span>
-      <span class="pv-state">${b.ready ? "configured" : esc(b.hint || "not configured")}</span>
+      <span class="pv-dot"></span>
+      <div class="pv-main">
+        <div class="pv-top"><b>${esc(b.label)}</b>
+          ${b.ready ? '<span class="pv-badge">configured</span>'
+                    : (b.console ? `<a class="pv-link" href="${esc(b.console)}" target="_blank" rel="noopener">get it →</a>` : "")}</div>
+        <div class="pv-env">${esc(b.env)}</div>
+        <div class="pv-hint">${esc(b.hint || "")}</div>
+      </div>
     </div>`).join("");
   box.innerHTML = `
     <div class="pv-note">Every website the agent builds is published automatically to the first configured host.
       ${info?.autoPublish === false ? "<b>Auto-publish is switched off</b> (NEXUS_AUTO_PUBLISH=false)." : ""}</div>
     ${rows || '<div class="pv-note">Loading…</div>'}
-    <div class="pv-note">Add one of these to <code>.env</code> and restart to enable publishing.</div>
+    <div class="pv-note">Add one of these to your environment (in <code>.env</code> locally, or in the Render
+      dashboard → Environment) and restart to switch publishing on. Full walkthrough: <code>docs/CONNECT-HOSTING.md</code>.</div>
+    <div class="pv-btns"><button id="pvRecheck" class="btn ghost">↻ Recheck</button></div>
     ${last ? `<div class="pv-last">Last: ${last.ok ? `<a href="${last.url}" target="_blank" rel="noopener">${esc(last.url)}</a>` : esc(last.error || "failed")}</div>` : ""}`;
+  $("#pvRecheck").onclick = async () => { PUBUI.info = null; await loadPublish(true); renderPublishSheet(); };
 }
 $("#publishBtn").onclick = async () => {
   PUBUI.info = null;
