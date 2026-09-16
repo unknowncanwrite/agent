@@ -21,11 +21,38 @@ export function shellFor() {
   return { file: process.env.SHELL || "/bin/bash", args: ["-lc"] };
 }
 
+const SYS_DIR = "(?:etc|usr|bin|sbin|lib|lib64|boot|var|root|dev|proc|sys|opt|srv|System|Library)";
 const BLOCKED = [
+  // --- catastrophic one-liners ---
   /\brm\s+-rf\s+\/(?:\s|$)/, /\bmkfs\b/, /\bdd\s+if=.*of=\/dev\//,
   /:\(\)\{.*\};:/, /\bshutdown\b/, /\breboot\b/, /\bhalt\b/,
   /Format-Volume/i, /Remove-Item\s+-Recurse\s+-Force\s+[A-Za-z]:\\(\s|$)/i,
   /\bdel\s+\/s\s+\/q\s+[A-Za-z]:\\/i,
+
+  // --- recursive force-delete of the whole disk, the home dir, or a system dir ---
+  /\brm\s[^|;&\n]*-[a-zA-Z]*[rR][a-zA-Z]*[fF]?[a-zA-Z]*\s+(?:\/|\/\*)(?:\s|$|[;&|])/,
+  /\brm\s[^|;&\n]*-(?:rf|fr|r\s+-f|f\s+-r)\s+[^|;&\n]*\s+(?:~|\$HOME)\/?(?:\s|$|[;&|])/,
+  new RegExp(`\\brm\\s[^|;&\\n]*-[a-zA-Z]*[rR][a-zA-Z]*[fF]?[a-zA-Z]*\\s+\\/(?:${SYS_DIR})(?:\\/|\\s|$)`),
+  new RegExp(`\\brm\\s+[^|;&\\n]*-[a-zA-Z]*[fF][a-zA-Z]*[^|;&\\n]*\\s+\\/(?:${SYS_DIR})(?:\\/|\\s|$)`),
+  new RegExp(`\\brm\\s+[^|;&\\n]*\\s+\\/(?:${SYS_DIR})(?:\\/|\\s|$)`),
+
+  // --- emptying / altering system files ---
+  new RegExp(`\\b(?:truncate|shred|chattr)\\b[^|;&\\n]*\\s\\/(?:${SYS_DIR})(?:\\/|\\s|$)`),
+  new RegExp(`\\bchmod\\s+-R\\b[^|;&\\n]*\\s\\/(?:${SYS_DIR})(?:\\/|\\s|$)`),
+  new RegExp(`\\bchown\\s+(?:-R\\s+)?[^|;&\\n]*\\s\\/(?:${SYS_DIR})(?:\\/|\\s|$)`),
+  new RegExp(`(?:^|[^0-9])>>?\\s*\\/(?:${SYS_DIR})(?:\\/|\\s|$)`),
+  new RegExp(`\\b(?:mv|cp|install|ln|rsync)\\b[^|;&\\n]*\\s\\/(?:${SYS_DIR})(?:\\/|\\s|$)`),
+
+  // --- mass deletion / arbitrary code from the network ---
+  /\brm\s[^|;&\n]*\s(?:~|\$HOME)\/?(?:\s|$|[;&|])/,
+  /\bchmod\s+-R\b[^|;&\n]*\s\/(?:\s|$)/,
+  /\bchown\s+(?:-R\s+)?[^|;&\n]*\s\/(?:\s|$)/,
+  new RegExp(`\\bfind\\s+\\/(?:\\s|$)|\\bfind\\s+\\/(?:${SYS_DIR})(?:\\/|\\s)[^|;&\\n]*(?:-delete|-exec\\s+rm|\\|\\s*xargs\\s+rm)`),
+  new RegExp(`\\bfind\\s+\\/(?:\\*)?(?:\\s|$)[^|;&\\n]*(?:-delete|-exec\\s+rm|\\|\\s*xargs\\s+rm)`),
+  new RegExp(`\\bfind\\s+\\/(?:${SYS_DIR})(?:\\/|\\s)[^|;&\\n]*(?:-delete|-exec\\s+rm|\\|\\s*xargs\\s+rm)`),
+  /\b(?:curl|wget)\b[^|;&\n]*\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b/,
+  /\bshutil\.rmtree\b/,
+  /\b(?:sudo\s+)?rm\s+-rf\s+\$HOME/,
 ];
 export function isBlocked(cmd) {
   return BLOCKED.some((r) => r.test(cmd));

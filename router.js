@@ -2,7 +2,7 @@
 import { complete, chainFor } from "./models.js";
 
 /** Cheap heuristic classification — zero latency, catches the obvious cases. */
-function heuristic(text) {
+export function heuristic(text) {
   const t = (text || "").toLowerCase().trim();
   const words = t.split(/\s+/).length;
 

@@ -40,6 +40,9 @@
         <button id="swarmBtn" class="swarm-pill" title="Live agent activity">
           <span class="sw-dot"></span><span id="swarmN">0</span> agents
         </button>
+        <button id="publishBtn" class="chip" title="Hosting — sites the agent builds are published here">
+          <span id="publishDot" class="status-dot"></span><span id="publishLbl">publish</span> <span class="caret">▾</span>
+        </button>
       </div>
       <div class="bar-right">
         <button id="modelBtn" class="chip" title="Model">
@@ -96,6 +99,11 @@
   </div>
   <div id="localHelp" class="local-help" style="display:none"></div>
   <div id="modelList" class="model-list"></div>
+</div></div>
+
+<div id="publishSheet" class="sheet"><div class="sheet-inner">
+  <div class="sheet-head"><b>Hosting</b><button class="sheet-x">✕</button></div>
+  <div id="publishBody"></div>
 </div></div>
 
 <div id="settingsSheet" class="sheet"><div class="sheet-inner">

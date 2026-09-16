@@ -1,0 +1,27 @@
+# secrets + local state
+.env
+.env.local
+providers.json
+.providers-off.json
+
+# runtime output
+workspace/
+uploads/
+.memory/
+.checkpoints/
+*.log
+
+# deps / caches
+node_modules/
+__pycache__/
+.venv/
+venv/
+.cache/
+.pytest_cache/
+ms-playwright/
+*.pyc
+
+# editors / OS
+.DS_Store
+.idea/
+.vscode/

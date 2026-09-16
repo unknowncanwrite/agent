@@ -168,6 +168,7 @@ A pinned right-hand dock — never scrolls away:
 **Web** `web_search` · `fetch_url`
 **Vision** `screenshot` · `browser_interact`
 **Intelligence** `think_parallel` · `delegate_parallel` · `review_code`
+**Publishing** `publish_website` — puts a site you built online and returns its live URL
 **Meta** `update_plan` · `read_own_code` · `system_info`
 
 ---
@@ -181,6 +182,30 @@ A pinned right-hand dock — never scrolls away:
 | `PORT` | `3000` | Web UI port |
 | `AGENT_WORKSPACE` | `./workspace` | Where the agent builds |
 | `AGENT_FULL_ACCESS` | `false` | Allow access beyond the workspace |
+| `VERCEL_TOKEN` | — | Publish built websites to Vercel (simplest option) |
+| `RENDER_DEPLOY_HOOK_URL` | — | …or trigger a Render service deploy hook instead |
+| `RENDER_API_KEY` + `RENDER_SERVICE_ID` | — | …or deploy through the Render API |
+| `PUBLISH_GITHUB_REPO` | — | …or publish to GitHub Pages (`owner/repo`, needs `gh`) |
+| `NEXUS_AUTO_PUBLISH` | `true` | Publish a site automatically at the end of a web build |
+
+---
+
+## Auto-publish — the site goes online by itself
+
+When a run builds a website, NEXUS publishes it before reporting done and hands you the live
+URL (on the card in the UI, and in the final answer). Configure **one** host and it just works:
+
+| Host | What to set | Where to get it |
+|---|---|---|
+| **Vercel** (easiest) | `VERCEL_TOKEN` | vercel.com/account/tokens — deploys straight from the API, no CLI |
+| **Render** | `RENDER_DEPLOY_HOOK_URL` | your static site → Settings → Deploy Hook (Render builds it for you) |
+| **Render** (API) | `RENDER_API_KEY` + `RENDER_SERVICE_ID` | render.com dashboard → Account → API keys |
+| **GitHub Pages** | `PUBLISH_GITHUB_REPO=owner/repo` | needs an authenticated `gh` CLI |
+
+With nothing configured the run still serves the site on `localhost` and tells you exactly
+which variable to set. The agent can also publish on demand — just say *"publish it"* and it
+calls `publish_website`. Set `NEXUS_AUTO_PUBLISH=false` if you would rather it never happens
+by itself.
 
 ---
 

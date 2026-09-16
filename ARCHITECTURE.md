@@ -53,6 +53,7 @@ user message
 | `oscontrol.js` | Bridge to the Python sidecar |
 | `os_control.py` | pyautogui: cursor, keyboard, screen capture, windows |
 | `selfedit.js` | Self-modification with git snapshots + auto-revert |
+| `publish.js` | Auto-publish a built website (Vercel / Render / GitHub Pages) |
 | `browser.js` | Playwright vision tools |
 | `start.js` | Supervisor: preflight checks, crash limits, restart |
 

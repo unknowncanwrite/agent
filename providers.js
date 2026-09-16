@@ -195,11 +195,19 @@ export async function listModels() {
 }
 
 /** Resolve a tagged model id back to { client, model }. */
+const _warnedPrefixes = new Set();
 export function resolve(taggedId) {
   if (taggedId && taggedId.includes("/")) {
     const [maybe, ...rest] = taggedId.split("/");
     const p = clients.get(maybe);
     if (p) return { client: p.client, model: rest.join("/"), provider: p.id, local: p.local };
+    // A tag that is not a provider id would silently be sent to the default provider with a
+    // mangled model name; say so at least once instead of failing somewhere confusing.
+    if (!_warnedPrefixes.has(maybe)) {
+      _warnedPrefixes.add(maybe);
+      console.warn(`[providers] "${maybe}" is not a configured provider — routing "${taggedId}" to the default provider. ` +
+        `Known providers: ${[...clients.keys()].join(", ") || "(none)"}`);
+    }
   }
   const x = all().find((p) => p.enabled !== false) || all()[0];
   return { client: x?.client, model: taggedId, provider: x?.id, local: !!x?.local };

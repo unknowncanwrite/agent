@@ -20,6 +20,7 @@ import * as SUP from "./supervisor.js";
 import * as SWARM from "./swarm.js";
 import { pool, scheduleCalls, compact, convoTokens, TTLCache } from "./workers.js";
 import * as SELF from "./selfedit.js";
+import * as PUB from "./publish.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const APP_DIR = __dirname;
@@ -169,6 +170,12 @@ export const TOOLS = [
     { name: { type: "string" }, command: { type: "string" }, args: { type: "array", items: { type: "string" } },
       env: { type: "object" } }, ["name", "command"]),
 
+  T("publish_website", "Put a website you built on the public internet and get its live URL. Call this as the LAST step of every web build (after you have run and verified it). Uses Vercel when VERCEL_TOKEN is set, otherwise a Render deploy hook, otherwise GitHub Pages; with none configured it serves a local preview and tells you which variable to set.",
+    { dir: { type: "string", description: "folder containing the site (default: the workspace)" },
+      name: { type: "string", description: "project name / subdomain (default: folder name)" },
+      backend: { type: "string", enum: ["vercel", "render", "github"] },
+      build: { type: "boolean", description: "run npm install + npm run build first for node projects (default true)" } }),
+
   T("ask_user", "Ask the user ONE short question when a decision is genuinely blocking and you cannot reasonably assume. Prefer deciding yourself and noting the assumption. Never use for routine confirmation.",
     { question: { type: "string" }, options: { type: "array", items: { type: "string" } } }, ["question"]),
   T("use_skill", "Load a specialised skill (a detailed workflow playbook) before doing that kind of work. Skills teach you rigorous methodology for code review, debugging, frontend design, TDD, deep research, etc.",
@@ -258,10 +265,33 @@ async function tree(dir, depth = 0, max = 5, acc = [], baseDir = dir) {
 const CACHE = { read: new TTLCache(15000, 120), tree: new TTLCache(8000, 40), web: new TTLCache(300000, 60) };
 export function invalidateCache() { CACHE.read.clear(); CACHE.tree.clear(); }
 
+/** Remember a file this run produced (used to decide what may be auto-published). */
+function noteCtxFile(ctx, abs) {
+  if (!ctx) return;
+  if (!Array.isArray(ctx.written)) ctx.written = [];
+  if (ctx.written.length < 400 && !ctx.written.includes(abs)) ctx.written.push(abs);
+}
+
+/** Publish with a hard deadline so a stuck upload cannot hang the agent run forever. */
+function publishWithTimeout(opts, onLog, signal) {
+  const ms = PUB.autoPublishMs();
+  let done = false, timer = null;
+  return new Promise((resolve) => {
+    const finish = (v) => { if (done) return; done = true; clearTimeout(timer); resolve(v); };
+    timer = setTimeout(() => finish({ ok: false, error: `publishing took longer than ${Math.round(ms / 1000)}s`, logs: [] }), ms);
+    try {
+      const r = PUB.publish({ ...opts, onLog, signal: signal || undefined });
+      r.then(finish, (e) => finish({ ok: false, error: e?.message || String(e), logs: [] }));
+    } catch (e) { finish({ ok: false, error: e?.message || String(e), logs: [] }); }
+  });
+}
+
 export function makeImpl(ctx) {
   const { send, signal, freeOnly } = ctx;
   const depth = ctx.depth || 0;
   const emit = (o) => send(o);
+  const runCtx = ctx.ctx && ctx.ctx.runId === ctx.runId ? ctx.ctx : ctx;   // the run's shared bookkeeping
+  const note = (abs) => noteCtxFile(runCtx, abs);
 
   return {
     async update_plan(a = {}) {
@@ -321,7 +351,7 @@ export function makeImpl(ctx) {
       await HOOK.checkpoint(f, "write_file");
       await fs.mkdir(path.dirname(f), { recursive: true });
       await fs.writeFile(f, content ?? "", "utf8");
-      invalidateCache(); emit({ type: "file_changed", path: rel(f) });
+      note(f); invalidateCache(); emit({ type: "file_changed", path: rel(f) });
       await HOOK.fire("after_write", { tool: "write_file", file: f }, (l) => emit({ type: "hook", text: l }));
       return `Wrote ${rel(f)} — ${(content || "").split("\n").length} lines, ${(content || "").length} bytes`;
     },
@@ -701,6 +731,52 @@ export function makeImpl(ctx) {
       return `Asked the user: "${question}". They will answer in their next message — stop and wait; do not guess.`;
     },
 
+    async publish_website({ dir = ".", name, backend, build = true }) {
+      const target = resolvePath(dir);
+      const site = await PUB.detectSite(target);
+      if (!site) {
+        return `No website found in ${rel(target)} — I look for an index.html, or a package.json with a build ` +
+               `script. Point me at the folder that holds the built site (or call scaffold_project first).`;
+      }
+      const host = PUB.backends().find((b) => b.id === backend) || PUB.primary();
+
+      // Nothing configured: still make the work visible locally, and say exactly what to set.
+      if (!host || !host.ready) {
+        const port = 4400 + Math.floor(Math.random() * 400);
+        const py = IS_WIN ? "python" : "python3";
+        const serveDir = site.outDir || site.dir;
+        try {
+          startBackground(`${py} -m http.server ${port} --bind 0.0.0.0`,
+            { cwd: serveDir, name: "site-preview", owner: ctx.runId,
+              onData: ({ text }) => emit({ type: "term_data", id: "publish", stream: "stdout", text }) });
+        } catch {}
+        const url = `http://localhost:${port}/`;
+        emit({ type: "publish", ok: false, local: true, url, dir: rel(serveDir), backend: "local" });
+        return `NOT published publicly — no host is configured — but the site is served locally at ${url}\n` +
+          `(from ${rel(serveDir)}).\nTo publish for real, set ONE of these in .env and ask me again:\n` +
+          `  • VERCEL_TOKEN=…            (vercel.com/account/tokens — simplest, deploys straight from the API)\n` +
+          `  • RENDER_DEPLOY_HOOK_URL=…  (Render dashboard → your static site → Settings → Deploy Hook)\n` +
+          `  • PUBLISH_GITHUB_REPO=owner/repo  (needs an authenticated gh CLI)\n` +
+          `Tell the user the site is only on localhost and needs one of those to go public.`;
+      }
+
+      emit({ type: "publish_start", dir: rel(site.dir), backend: host.id });
+      const r = await publishWithTimeout({ dir: site.dir, name, backend },
+        (txt) => emit({ type: "publish_log", text: String(txt).slice(0, 400) }), signal)
+        .catch((e) => ({ ok: false, error: e?.message || String(e), logs: [] }));
+      ctx.published = true;
+      ctx.publishedUrl = r?.url || null;
+      emit({ type: "publish", ok: !!r?.ok, url: r?.url || null, backend: r?.backend || host.id,
+             files: r?.files, bytes: r?.bytes, error: r?.error || null, dir: rel(site.dir) });
+      if (r?.ok && r.url) {
+        return `Published to ${host.label}: ${r.url}\n(${r.files} files, ${(r.bytes / 1024).toFixed(0)} KB from ` +
+          `${rel(r.dir || site.dir)}${r.note ? "; " + r.note : ""})\nReport this URL to the user as a markdown link.`;
+      }
+      return `Publishing to ${host.label} failed: ${r?.error || "unknown error"}\n` +
+        `Fix the cause and call publish_website again, or tell the user what is missing. ` +
+        `Full log:\n${(r?.logs || []).join("").slice(0, 1500)}`;
+    },
+
     async use_skill({ name }) {
       const sk = await SKILL.get(name);
       if (!sk) {
@@ -729,6 +805,7 @@ export function makeImpl(ctx) {
     },
 
     async create_document(a) {
+      if (a?.outPath) { try { note(resolvePath(a.outPath)); } catch {} }
       const out = resolvePath(a.outPath);
       await fs.mkdir(path.dirname(out), { recursive: true });
       const r = await DEV.makeDocument({ ...a, outPath: out }, ROOT, (t) => emit({ type: "term_data", id: "setup", stream: "stdout", text: t }));
@@ -737,6 +814,7 @@ export function makeImpl(ctx) {
       return r;
     },
     async analyze_data(a) {
+      if (a?.outPath) { try { note(resolvePath(a.outPath)); } catch {} }
       const f = resolvePath(a.file);
       const out = a.outPath ? resolvePath(a.outPath) : "";
       if (out) await fs.mkdir(path.dirname(out), { recursive: true }).catch(() => {});
@@ -1001,6 +1079,9 @@ Use delegate_parallel (up to 8) for independent build tasks and think_parallel f
    approach. Missing dependency → install it. Command not found → find the alternative. Blocked path →
    route around it. Exhaust real options before ever reporting failure.
 8. DELIVER — final markdown: what you built, decisions/assumptions, file tree, how to run, what you tested.
+   BUILT A WEBSITE? Publishing is part of finishing: publish_website puts it online (Vercel, Render or
+   GitHub Pages — whichever is configured) and returns a live URL. The run auto-publishes a site you just
+   created, so if that already happened, simply report the link. Never say "deployed" without a URL.
 
 === RULES ===
 - One prompt in, finished verified result out. Decide and act; note assumptions rather than asking.
@@ -1015,15 +1096,20 @@ Use delegate_parallel (up to 8) for independent build tasks and think_parallel f
 /* ---------------- Agent loop ---------------- */
 const CTX_BUDGET = Number(process.env.AGENT_CTX_BUDGET || 120000);
 
+let ACTIVE_CTX = null;
+const tagCtx = (o) => { ACTIVE_CTX = o; return o; };
+
 export async function runAgent(opts) {
   // Always reap background servers this run started — including on timeout, abort
   // or fatal error, not just on the clean completion path.
   const runId = opts?._runId || `run-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  try { return await _runAgent({ ...opts, _runId: runId }); }
-  finally { if ((opts?._depth || 0) === 0) { try { killAll(runId); } catch {} } }
+  const ctx = tagCtx({ runId });
+  try { return await _runAgent(ctx, { ...opts, _runId: runId }); }
+  finally { if (ACTIVE_CTX === ctx) ACTIVE_CTX = null; if ((opts?._depth || 0) === 0) { try { killAll(runId); } catch {} } }
 }
 
-async function _runAgent({ model, messages, send, maxSteps = 40, signal, freeOnly = true, _role = "main", _depth = 0, _runId = null }) {
+async function _runAgent(ctx, { model, messages, send, maxSteps = 40, signal, freeOnly = true, _role = "main", _depth = 0, _runId = null }) {
+  ctx = ctx || {};
   try { const { setMaxListeners } = await import("node:events"); setMaxListeners(0, signal); } catch {}
   setSetupLogger((text) => send({ type: "term_data", id: "setup", stream: "stdout", text }));
 
@@ -1033,7 +1119,7 @@ async function _runAgent({ model, messages, send, maxSteps = 40, signal, freeOnl
     ? "\nTOOLCHAIN ON THIS MACHINE: " + JSON.stringify(env.toolchain) + "\n" : "";
   send({ type: "env", env });
 
-  const impCtx = { send, signal, freeOnly, depth: _depth, runId: _runId };
+  const impCtx = { send, signal, freeOnly, depth: _depth, runId: _runId, written: [], ctx };
   const IMPL = makeImpl(impCtx);
 
   // long-term memory + MCP tools (top-level runs only)
@@ -1321,6 +1407,29 @@ async function _runAgent({ model, messages, send, maxSteps = 40, signal, freeOnl
           track.finishing = false;
           continue;
         }
+      }
+      // Auto-publish: if this run BUILT a website, put it online before we call it done.
+      if (_depth === 0 && !ctx.published && PUB.autoEnabled()) {
+        try {
+          const site = await PUB.siteFromWritten(ctx.written, ROOT);
+          if (site) {
+            send({ type: "publish_start", dir: rel(site.dir), backend: PUB.primary()?.id || "auto", auto: true });
+            const r = await publishWithTimeout({ dir: site.dir, build: true },
+              (txt) => send({ type: "publish_log", text: String(txt).slice(0, 400) }), signal);
+            ctx.published = true; ctx.publishedUrl = r?.url || null;
+            send({ type: "publish", ok: !!r?.ok, url: r?.url || null, backend: r?.backend || null,
+                   files: r?.files, bytes: r?.bytes, error: r?.error || null, dir: rel(site.dir), auto: true });
+            if (r?.ok && r.url) {
+              convo.push({ role: "user", content:
+                `[PUBLISHER] The site you just built is live at ${r.url} ` +
+                `(${r.files} files). Include that URL as a markdown link in your final answer.` });
+            } else if (r && r.ok === false && r.error) {
+              convo.push({ role: "user", content:
+                `[PUBLISHER] Auto-publish failed: ${r.error}. Tell the user, and note that ` +
+                `publish_website can retry it after the problem is fixed.` });
+            }
+          }
+        } catch (e) { console.error("[publish] auto-publish failed: " + (e?.message || e)); }
       }
       send({ type: "done", usage: res.usage || null, steps: step, model: used });
       if (_depth === 0) {

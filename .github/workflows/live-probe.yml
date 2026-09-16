@@ -1,0 +1,226 @@
+name: live smoke test (deployment)
+
+# Drives the REAL deployment over the network: health, a small agent task, then
+# verifies the artifact it produced and reports the publish configuration.
+# Runs when this file changes, or on demand from the Actions tab
+# (workflow_dispatch needs the file on the default branch).
+on:
+  push:
+    paths:
+      - ".github/workflows/live-probe.yml"
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Base URL of the deployment
+        required: false
+        default: https://agent-3tll.onrender.com
+      prompt:
+        description: Task to run through the live agent
+        required: false
+        default: "Create live-test.txt containing the output of `date -u` and the hostname, then run `cat live-test.txt` to verify it. Do not start servers, do not publish."
+
+permissions:
+  contents: write        # publishes the evidence to the live-probe-results branch
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BASE: ${{ github.event.inputs.base || 'https://agent-3tll.onrender.com' }}
+      PROMPT: ${{ github.event.inputs.prompt || 'Create live-test.txt containing the output of `date -u` and the hostname, then run `cat live-test.txt` to verify it. Do not start servers, do not publish.' }}
+      CHAT: live-probe-${{ github.run_number }}
+
+    steps:
+      - name: 1 · wake the service and read the basics
+        run: |
+          set -uo pipefail
+          say() { printf '\n───── %s ─────\n' "$1"; }
+          # Render free instances hibernate; a cold start can take ~60s.
+          say "GET /api/health (cold start tolerated)"
+          curl -sS -m 180 --retry 8 --retry-delay 10 --retry-all-errors "$BASE/api/health" | tee health.json; echo
+          say "GET /api/system"
+          curl -sS -m 120 --retry 4 --retry-delay 5 --retry-all-errors "$BASE/api/system" | tee system.json; echo
+          say "GET /api/publish (404 means the old build is still deployed)"
+          curl -sS -m 60 -o publish.json -w 'status=%{http_code}\n' "$BASE/api/publish" || true
+          cat publish.json 2>/dev/null; echo
+          ready=$(jq -r '(.ready // []) | map(.id) | join(",")' publish.json 2>/dev/null || echo "")
+          echo "::notice::publish backends ready: ${ready:-none}"
+          if [ -n "${ready:-}" ]; then echo "PUBLISH_READY=$ready" >> "$GITHUB_ENV"; fi
+          say "GET /api/jobs before"
+          curl -sS -m 60 "$BASE/api/jobs" | tee jobs-before.json; echo
+
+      - name: 2 · run a real task through the live agent
+        run: |
+          set -uo pipefail
+          printf '{"messages":[{"role":"user","content":%s}],"chatId":"%s","forceAgent":true,"maxSteps":12}' \
+            "$(printf '%s' "$PROMPT" | jq -Rs .)" "$CHAT" > payload.json
+          echo "payload: $(cat payload.json)"
+          # SSE stream: keep it open, but the job also runs detached if we time out.
+          timeout 900 curl -sS -N -H 'content-type: application/json' --data @payload.json \
+            "$BASE/api/smart" | tee sse.log | grep --line-buffered -E '"type":"(route|step|tool_start|tool_end|term_data|critic|publish|error|done|job_end)"' || true
+          echo
+          echo "── event type counts ──"
+          grep -o '"type":"[a-z_]*"' sse.log | sort | uniq -c | sort -rn || true
+
+      - name: 2b · build a site and publish it (only when a host is configured)
+        if: env.PUBLISH_READY != ''
+        run: |
+          set -uo pipefail
+          TASK="Build a single-file index.html landing page for a fictional coffee shop called Render Roast (inline CSS, no dependencies), verify it by writing it and running a quick command, then publish it so it goes live on a real URL."
+          printf '{"messages":[{"role":"user","content":%s}],"chatId":"live-publish-%s","forceAgent":true,"maxSteps":18}' \
+            "$(printf '%s' "$TASK" | jq -Rs .)" "${{ github.run_number }}" > payload-publish.json
+          timeout 1200 curl -sS -N -H 'content-type: application/json' --data @payload-publish.json \
+            "$BASE/api/smart" | tee sse-publish.log | grep --line-buffered -E '"type":"(publish_start|publish_log|publish|error|done|job_end)"' || true
+          echo
+          URL=$(grep -o '"type":"publish"[^}]*' sse-publish.log | grep -o '"url":"[^"]*"' | head -1 | sed 's/.*:"//;s/"//')
+          if [ -n "${URL:-}" ]; then
+            echo "::notice::published URL: $URL"
+            code=$(curl -sS -m 60 -o page.html -w '%{http_code}' "$URL" || echo 000)
+            echo "::notice::published URL status=$code bytes=$(wc -c < page.html)"
+            head -c 300 page.html
+          else
+            echo "::error::no publish URL in the stream — see sse-publish.log in the artifacts"
+          fi
+
+      - name: 3 · verify what the agent actually produced
+        run: |
+          set -uo pipefail
+          say() { printf '\n───── %s ─────\n' "$1"; }
+          say "GET /api/jobs after"
+          for i in $(seq 1 30); do
+            curl -sS -m 60 "$BASE/api/jobs" -o jobs-after.json || true
+            status=$(jq -r --arg c "$CHAT" '.[] | select(.chatId==$c) | .status' jobs-after.json 2>/dev/null | head -1)
+            echo "attempt $i: status='${status:-none}'"
+            [ "${status:-}" != "running" ] && [ -n "${status:-}" ] && break
+            sleep 10
+          done
+          cat jobs-after.json; echo
+          say "GET /api/ws/tree"
+          curl -sS -m 120 "$BASE/api/ws/tree?dir=." | head -c 4000; echo
+          say "GET /api/ws/file?path=live-test.txt"
+          curl -sS -m 60 "$BASE/api/ws/file?path=live-test.txt" -w '\nstatus=%{http_code}\n' | head -c 2000
+
+          # annotations are readable through the API without downloading logs
+          echo "::notice::live job status: ${status:-unknown}"
+          echo "::notice::live events: $(grep -o '"type":"[a-z_]*"' sse.log 2>/dev/null | sort | uniq -c | tr '\n' ' ' | head -c 400)"
+          echo "::notice::live tools: $(grep -o '"name":"[a-z_]*"' sse.log 2>/dev/null | sed 's/.*:"//;s/"//' | sort -u | tr '\n' ',' | head -c 300)"
+          echo "::notice::agent answer: $(jq -r '.[] | select(.chatId==\"'"$CHAT"'\") | .title' jobs-after.json 2>/dev/null | head -1)"
+          file_status=$(curl -sS -m 60 -o live-test.txt -w '%{http_code}' "$BASE/api/ws/file?path=live-test.txt" || echo 000)
+          echo "::notice::live-test.txt status=$file_status content=$(head -c 160 live-test.txt | tr '\n' ' ')"
+          health=$(cat health.json 2>/dev/null | head -c 200)
+          echo "::notice::health: $health"
+
+      # A real browser drives the live UI: load it, send a message, wait for the answer.
+      # Screenshots are attached to the run; findings come back as annotations.
+      - name: 3b · drive the live UI in a real browser
+        if: always()
+        run: |
+          set -uo pipefail
+          mkdir -p /tmp/uitest && cd /tmp/uitest
+          npm init -y >/dev/null 2>&1
+          npm i playwright@1.49.0 --no-audit --no-fund >/dev/null 2>&1 || { echo "::warning::could not install playwright"; exit 0; }
+          npx playwright install --with-deps chromium >/dev/null 2>&1 || echo "::warning::chromium install had issues"
+          cat > probe.mjs <<'JS'
+          import { chromium } from "playwright";
+          const url = process.env.BASE;
+          const errors = [];
+          const say = (m) => console.log("::notice::" + m);
+          const b = await chromium.launch();
+          const page = await b.newPage({ viewport: { width: 1440, height: 900 } });
+          page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
+          page.on("console", (m) => { if (m.type() === "error") errors.push("console: " + m.text()); });
+          try {
+            await page.goto(url, { waitUntil: "domcontentloaded", timeout: 150000 });
+            await page.waitForSelector("#input", { timeout: 60000 });
+            say(`ui loaded: title="${await page.title()}" header buttons=${await page.locator("#bar button").count()} rail=${await page.locator("#railChats").count()}`);
+            await page.screenshot({ path: "ui-1-loaded.png" });
+
+            const ticket = "UI-PROBE-" + Date.now().toString(36);
+            await page.fill("#input", `Reply with exactly this token and nothing else: ${ticket}`);
+            await page.click("#sendBtn");
+            await page.waitForTimeout(1500);
+            await page.screenshot({ path: "ui-2-sending.png" });
+            say(`ui send clicked, busy=${await page.locator("#stopBtn").isVisible().catch(() => false)}`);
+
+            const seen = await page
+              .waitForFunction(
+                (t) => {
+                  const body = document.querySelector(".turn.ai .ai-body");
+                  if (!body) return false;
+                  const txt = body.innerText || "";
+                  return txt.includes(t) ? txt.slice(-200) : false;
+                },
+                ticket,
+                { timeout: 240000 }
+              )
+              .then((h) => h.jsonValue())
+              .catch(() => null);
+            say(seen ? `ui REPLY OK — the live UI streamed: ${String(seen).replace(/\n/g, " ").slice(0, 160)}`
+                     : "ui reply NOT seen within 240s (the message may still be running — check /api/jobs)");
+            await page.screenshot({ path: "ui-3-reply.png", fullPage: true });
+
+            const chips = await page.evaluate(() => ({
+              publish: !!document.querySelector("#publishBtn"),
+              publishLabel: document.querySelector("#publishLbl")?.textContent || null,
+            }));
+            say(`ui hosting chip present=${chips.publish} label="${chips.publishLabel}" (false = the deployment still runs the older build)`);
+          } catch (e) {
+            say("ui probe failed: " + String(e).split("\n")[0].slice(0, 200));
+          } finally {
+            say("ui console errors: " + (errors.slice(0, 3).join(" | ") || "none"));
+            await b.close().catch(() => {});
+          }
+          JS
+          BASE="$BASE" node probe.mjs || echo "::warning::ui probe script exited non-zero"
+          cp -f /tmp/uitest/ui-*.png "$GITHUB_WORKSPACE/" 2>/dev/null || true
+
+      - name: 4 · uploads the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-probe-${{ github.run_number }}
+          path: |
+            *.json
+            sse.log
+            sse-publish.log
+            page.html
+            ui-*.png
+          if-no-files-found: ignore
+
+      # The key facts are emitted as annotations (readable through the API/UI without
+      # downloading anything). If the repo allows the workflow to write, the same files are
+      # also mirrored to the live-probe-results branch:
+      #   Settings → Actions → General → Workflow permissions → Read and write
+      - name: 5 · archive the evidence (optional)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          REPO="${{ github.repository }}"
+          BRANCH=live-probe-results
+          RUN=${{ github.run_number }}
+          echo "::notice::files produced: $(ls -1 *.json sse.log sse-publish.log page.html 2>/dev/null | tr '\n' ' ')"
+          sha=$(gh api "repos/$REPO/git/ref/heads/$BRANCH" --jq .object.sha 2>/dev/null || true)
+          if [ -z "${sha:-}" ]; then
+            head=$(gh api "repos/$REPO/git/ref/heads/${{ github.ref_name }}" --jq .object.sha 2>/dev/null || echo "${{ github.sha }}")
+            gh api -X POST "repos/$REPO/git/refs" -f ref="refs/heads/$BRANCH" -f sha="$head" >/dev/null 2>&1 || true
+          fi
+          ok=0; bad=0
+          for f in health.json system.json publish.json jobs-before.json jobs-after.json live-test.txt sse.log sse-publish.log page.html; do
+            [ -f "$f" ] || continue
+            b64=$(base64 -w0 "$f" | tr -d '\n' || true)
+            if gh api -X PUT "repos/$REPO/contents/live-probe/run-$RUN/$f" \
+                 -f message="live probe run $RUN: $f" -f branch="$BRANCH" -f content="$b64" >/dev/null 2>&1; then
+              ok=$((ok+1))
+            else
+              bad=$((bad+1))
+            fi
+          done
+          if [ "$bad" -gt 0 ]; then
+            echo "::notice::archived $ok file(s); $bad could not be written to $BRANCH (workflow token is read-only — enable 'Read and write permissions' under Settings → Actions → General to keep them). The run artifacts above are always available."
+          else
+            echo "::notice::archived $ok file(s) to branch $BRANCH"
+          fi
+
