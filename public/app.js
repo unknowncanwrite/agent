@@ -595,8 +595,9 @@ async function send() {
           }
           case "skill":
             body.insertAdjacentHTML("beforeend",
-              `<div class="log ok"><div class="log-h"><span class="ic">🎓</span><span class="nm">skill loaded</span>
-               <span class="ar">${esc(ev.name)}</span></div></div>`);
+              `<div class="log skill"><div class="log-h"><span class="ic">🧩</span><span class="nm">skill loaded</span>
+               <span class="ar">${esc(ev.command || ev.name)}${ev.bytes ? ` · ${(ev.bytes / 1024).toFixed(1)}kb playbook` : ""}</span></div></div>`);
+            toBottom();
             break;
           case "mcp_tools":
             $("#metaRight").textContent = `+${ev.n} MCP tools`;
@@ -796,8 +797,60 @@ $("#stopBtn").onclick = async () => {
   toast("Stopped");
 };
 $("#newChat").onclick = newChat;
-inp.addEventListener("input", () => { inp.style.height = "auto"; inp.style.height = Math.min(inp.scrollHeight, 190) + "px"; });
-inp.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+/* ================= SLASH MENU — "/" lists every skill ================= */
+const SLASH = { items: [], sel: 0, open: false, cache: null };
+async function slashCache() {
+  if (SLASH.cache) return SLASH.cache;
+  try { SLASH.cache = await (await fetch("/api/skills")).json(); } catch { SLASH.cache = []; }
+  return SLASH.cache;
+}
+function slashRender() {
+  const el = $("#slashMenu");
+  if (!SLASH.open || !SLASH.items.length) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = SLASH.items.map((s, i) =>
+    `<div class="slash-i${i === SLASH.sel ? " sel" : ""}" data-i="${i}">` +
+    `<span class="slash-n">/${esc(s.name)}</span>` +
+    `<span class="slash-d">${esc(String(s.description || "").slice(0, 90))}</span></div>`).join("");
+  el.querySelectorAll(".slash-i").forEach((d) => {
+    d.onmousedown = (e) => { e.preventDefault(); pickSlash(+d.dataset.i); };
+    d.onmouseenter = () => { SLASH.sel = +d.dataset.i; slashRender(); };
+  });
+}
+async function updateSlash() {
+  const m = /^\/([a-z0-9-]*)$/.exec(inp.value || "");
+  if (!m) return closeSlash();
+  const all = await slashCache();
+  const q = m[1].toLowerCase();
+  SLASH.items = all.filter((s) => !q || s.name.startsWith(q) || (s.triggers || []).some((t) => t && t.includes(q))).slice(0, 12);
+  if (!SLASH.items.length) return closeSlash();
+  SLASH.sel = 0; SLASH.open = true;
+  slashRender();
+}
+function pickSlash(i) {
+  const s = SLASH.items[i];
+  if (!s) return;
+  inp.value = "/" + s.name + " ";
+  closeSlash();
+  inp.focus();
+  inp.dispatchEvent(new Event("input"));
+}
+function closeSlash() { SLASH.open = false; SLASH.items = []; const el = $("#slashMenu"); if (el) el.hidden = true; }
+function moveSlash(dir) {
+  if (!SLASH.open || !SLASH.items.length) return;
+  SLASH.sel = (SLASH.sel + dir + SLASH.items.length) % SLASH.items.length;
+  slashRender();
+}
+inp.addEventListener("input", () => { inp.style.height = "auto"; inp.style.height = Math.min(inp.scrollHeight, 190) + "px"; updateSlash(); });
+inp.addEventListener("keydown", (e) => {
+  if (SLASH.open) {
+    if (e.key === "ArrowDown") { e.preventDefault(); moveSlash(1); return; }
+    if (e.key === "ArrowUp") { e.preventDefault(); moveSlash(-1); return; }
+    if (e.key === "Escape") { e.preventDefault(); closeSlash(); return; }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); pickSlash(SLASH.sel); return; }
+  }
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+});
 
 $("#modelBtn").onclick = () => { $("#modelSheet").classList.add("open"); renderModels(); renderProviders(); renderCloud(); $("#modelSearch").focus(); };
 $("#modelSearch").oninput = renderModels;

@@ -121,6 +121,12 @@ curl -s https://<your-app>.onrender.com/api/publish | head -c 400
   returned URL to prove it is live
 * prints the key facts as annotations and uploads the JSON/SSE/screenshots as a run artifact
 
+Set **Run workflow → `pack` = `true`** to additionally send the **20-prompt pack**
+(`tests/prompts.json`) to the deployment with the real models — one chat per prompt
+(`live-pack-<id>`), each reported as its own annotation with route, tool count, model and status,
+transcripts attached as the `prompt-pack-<n>` artifact. This is the best way to see how the
+agent behaves with real prompts *after* you change something (new model, new host, new tools).
+
 Run it from **Actions → "live smoke test (deployment)" → Run workflow**, or push any change to
 the workflow file. First live runs: 6/6 passed (see
 [the latest run](https://github.com/unknowncanwrite/agent/actions/workflows/live-probe.yml)).

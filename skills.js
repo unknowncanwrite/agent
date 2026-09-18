@@ -73,6 +73,23 @@ export async function catalogue() {
     all.map((s) => `- ${s.name}: ${s.description.slice(0, 110)}`).join("\n") + "\n";
 }
 
+/**
+ * Slash commands: "/office-hours reframe my idea" runs that skill.
+ * Resolves the bare name, then the gstack- prefixed one, so both `/ship` and
+ * `/gstack-ship` work. Returns null when the message is not a command.
+ */
+export async function expandCommand(text) {
+  const m = /^\s*\/([a-z][a-z0-9-]{1,40})(?:\s+([\s\S]*))?$/.exec(String(text || ""));
+  if (!m) return null;
+  const [, raw, rest = ""] = m;
+  const all = await list();
+  const want = raw.toLowerCase();
+  const skill = all.find((s) => s.name === want || s.dir === want)
+    || all.find((s) => s.name === `gstack-${want}` || s.dir === `gstack-${want}`);
+  if (!skill) return null;
+  return { skill, command: "/" + raw, task: rest.trim() };
+}
+
 /** Auto-suggest skills whose triggers match the task. */
 export async function match(text) {
   const all = await list();

@@ -16,8 +16,9 @@ const MODELS = [
 ];
 
 export function startMock({ port = 0 } = {}) {
-  const state = { mode: "text", requests: [], counters: {}, failModels: [], hangModels: [], delayMs: 0,
-                  deployments: [], hooks: 0, renderDeploys: [] };
+  const state = { mode: "text", scenario: "", route: "agent", fetchUrl: "", requests: [], counters: {},
+                  failModels: [], hangModels: [], delayMs: 0,
+                  deployments: [], hooks: 0, renderDeploys: [], failDeploy: false };
   const ctl = { get mode() { return state.mode; }, get requests() { return state.requests; }, state };
 
   const server = http.createServer(async (req, res) => {
@@ -39,8 +40,9 @@ export function startMock({ port = 0 } = {}) {
     }
     if (url.pathname === "/__reset") {
       state.requests = []; state.counters = {}; state.mode = "text";
+      state.scenario = ""; state.route = "agent"; state.fetchUrl = "";
       state.failModels = []; state.hangModels = []; state.delayMs = 0;
-      state.deployments = []; state.hooks = 0; state.renderDeploys = [];
+      state.deployments = []; state.hooks = 0; state.renderDeploys = []; state.failDeploy = false;
       res.writeHead(200); return res.end("ok");
     }
 
@@ -70,8 +72,20 @@ export function startMock({ port = 0 } = {}) {
       return handleCompletion(req, res, payload, n, state);
     }
 
+    // ---- a fetchable page (used by the fetch_url prompt) ----
+    if (url.pathname === "/demo" && req.method === "GET") {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      return res.end("<html><head><title>Demo</title></head><body><h1>MOCK PAGE TEXT</h1>" +
+        "<p>This is the demo page served by the mock upstream. It exists so fetch_url " +
+        "has something real to read without a browser.</p></body></html>");
+    }
+
     // ---- fake hosting APIs (used by the publish tests) ----
     if (url.pathname === "/v13/deployments" && req.method === "POST") {
+      if (state.failDeploy) {
+        res.writeHead(403, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ error: { code: "forbidden", message: "invalid token" } }));
+      }
       const dep = JSON.parse(body || "{}");
       state.deployments.push({ name: dep.name, target: dep.target, projectSettings: dep.projectSettings,
         files: (dep.files || []).map((f) => ({ file: f.file, encoding: f.encoding, bytes: String(f.data || "").length })) });
@@ -211,8 +225,185 @@ function planFor(payload, n, state) {
     case "agent-prose":
       return { content: "I will create the file for you now. Let me write the script and run it." };
 
+    case "agent-use-skill":
+      // the model loads a skill by name, then does a tiny bit of work
+      if (toolResults.length === 0)
+        return { tool_calls: [{ name: "use_skill", args: { name: "systematic-debugging" } }] };
+      if (!toolResults.some((m) => m.name === "system_info"))
+        return { tool_calls: [{ name: "system_info", args: {} }] };
+      return { content: "Skill loaded and system checked. NEVER guess-and-patch — reproduce the failure first, then localise it." };
+
+    case "gstack-sprint":
+      return gstackSprintPlan(messages, toolResults);
+
+    case "pack":
+      // a single mode driven per-request by /__ctl { scenario, route, fetchUrl }
+      return packPlan(state, messages, toolResults);
+
     default:
       return { content: "unhandled mock mode: " + state.mode };
+  }
+}
+
+/* Detect the router's classification call so the pack mode can answer it with a route. */
+function isClassifyCall(messages) {
+  return (messages || []).some((m) => {
+    const c = typeof m.content === "string" ? m.content
+      : (m.content || []).map((p) => p.text || "").join(" ");
+    return /Classify the user's message/i.test(c);
+  });
+}
+
+const SUBAGENT_FILES = {
+  "README.md": "# Project\n\nA short overview of this project, written by a parallel sub-agent.\n",
+  "LICENSE": "MIT License\n\nCopyright (c) 2026\n\nPermission is hereby granted, free of charge, to any person obtaining a copy.\n",
+  "site/index.html": "<!doctype html>\n<html><head><meta charset='utf-8'><title>Riverside Bakery</title><link rel='stylesheet' href='styles.css'></head>\n<body><h1>Riverside Bakery</h1><p>Fresh sourdough, croissants and coffee every morning.</p></body></html>\n",
+  "site/styles.css": "body { font-family: Georgia, serif; margin: 3rem auto; max-width: 40rem; }\nh1 { color: #6b3f23; }\n",
+};
+
+/* A sub-agent conversation (spawn_subagents) gets a simple writer plan derived from its GOAL. */
+function subagentPlan(messages, toolResults) {
+  const lastUser = [...(messages || [])].reverse().find((m) => m.role === "user");
+  const u = typeof lastUser?.content === "string" ? lastUser.content : "";
+  if (!/You are sub-agent/i.test(u)) return null;
+  const cell = (/WRITE ALL FILES UNDER:\s*(\S+)/.exec(u) || [])[1] || "";
+  const file = (/write the file ([\w./-]+)/i.exec(u) || [])[1] || "";
+  const target = (cell ? cell + "/" : "") + file;
+  if (!toolResults.length) {
+    if (file) return { tool_calls: [{ name: "write_file", args: { path: target, content: SUBAGENT_FILES[file] || `Written by a sub-agent.\n` } }] };
+    return { content: "Done." };
+  }
+  return { content: `Done — wrote ${file || "the requested file"}.` };
+}
+
+/* The gstack sprint stages: each [SKILL …] marker names its stage. A chained chat carries
+   several markers — the stage under test is always the LAST one. */
+function gstackSprintPlan(messages, toolResults) {
+  const all = (messages || []).map((m) => String(typeof m.content === "string" ? m.content : "")).join("\n");
+  const marks = [...all.matchAll(/\[SKILL \/([a-z0-9-]+)\]/g)];
+  const stage = marks.length ? marks.at(-1)[1] : "";
+  if (stage.includes("office-hours")) {
+    if (!toolResults.length) return { tool_calls: [{ name: "write_file", args: { path: "DESIGN.md", content:
+      "# Design: daily briefing app for my calendar\n\n## Forcing questions\nWhat pain does it remove, for whom, and how much would they pay?\n\n## Narrowest wedge\nOne morning email: today's meetings plus the free blocks between them.\n\n## Recommendation\nBuild the wedge first. Ship it in a day, then grow from real usage.\n" } }] };
+    return { content: "DESIGN.md written — forcing questions answered, the narrowest wedge named, one recommendation." };
+  }
+  if (stage.includes("plan-ceo-review")) {
+    if (!toolResults.length) return { tool_calls: [{ name: "write_file", args: { path: "PLAN-REVIEW.md", content:
+      "# CEO review of the briefing app plan\n\nScope: right-sized. Risk: low. Decision: ship the wedge first.\n" } }] };
+    return { content: "PLAN-REVIEW.md written — scope modes compared, decision appended." };
+  }
+  if (stage.includes("ship")) {
+    if (!toolResults.length) return { tool_calls: [{ name: "write_file", args: { path: "SPRINT.md", content:
+      "# SPRINT report\n\nDiff audited, full test run green, change committed and pushed.\n" } }] };
+    return { content: "SPRINT.md written — the ship report: audit, tests, commit." };
+  }
+  if (!toolResults.length) return { tool_calls: [{ name: "write_file", args: { path: "STAGE.md", content: "Stage output.\n" } }] };
+  return { content: "Stage complete." };
+}
+
+/* The 20-prompt pack: one plan per scenario. Steps advance as tool results accumulate,
+   exactly like the existing "agent" modes above. */
+function packPlan(state, messages, toolResults) {
+  if (isClassifyCall(messages)) {
+    const route = state.route === "chat" ? "chat" : "agent";
+    return { content: JSON.stringify({ route, tier: "deep", why: "scripted pack routing" }) };
+  }
+  const sub = subagentPlan(messages, toolResults);
+  if (sub) return sub;
+
+  switch (state.scenario) {
+    case "chat":
+      return { content: "A few name ideas: The Daily Grind, Copper Kettle, First Light, Beans & Bough. My pick is Copper Kettle — warm, specific and easy to say out loud." };
+    case "notes":
+      if (!toolResults.length) return { tool_calls: [{ name: "write_file", args: { path: "notes/todo.md", content:
+        "# Launch the landing page\n\n- [ ] Finalise the copy and pick the domain\n- [ ] Wire up the waitlist form\n- [ ] Send the launch email\n" } }] };
+      return { content: "notes/todo.md created with the three launch tasks." };
+    case "website":
+      if (!toolResults.length) return { tool_calls: [{ name: "write_file", args: { path: "index.html", content:
+        "<!doctype html>\n<html><head><meta charset='utf-8'><title>Riverside Bakery</title></head>\n<body><h1>Riverside Bakery</h1><p>Fresh sourdough, croissants and coffee every morning.</p></body></html>\n" } }] };
+      if (!toolResults.some((m) => m.name === "run_command"))
+        return { tool_calls: [{ name: "run_command", args: { command: "test -f index.html && grep -c 'Riverside Bakery' index.html" } }] };
+      return { content: "The bakery page is built and the check passed — index.html carries the name and the offer." };
+    case "fib":
+      if (!toolResults.length) return { tool_calls: [{ name: "write_file", args: { path: "fib.py", content:
+        "n, a, b = 10, 0, 1\nout = []\nwhile n:\n    out.append(str(a))\n    a, b = b, a + b\n    n -= 1\nprint(\" \".join(out))\n" } }] };
+      if (!toolResults.some((m) => m.name === "run_command"))
+        return { tool_calls: [{ name: "run_command", args: { command: "python3 fib.py" } }] };
+      return { content: "fib.py written and run — the first ten Fibonacci numbers printed above." };
+    case "csv":
+      if (!toolResults.length) return { tool_calls: [{ name: "write_file", args: { path: "products.csv", content:
+        "name,price\ncoffee,3.50\nbread,2.80\njam,4.20\n" } }] };
+      if (!toolResults.some((m) => m.name === "read_file"))
+        return { tool_calls: [{ name: "read_file", args: { path: "products.csv" } }] };
+      return { content: "products.csv saved and read back: coffee, bread and jam with their prices." };
+    case "tests-fail":
+      if (!toolResults.length) return { tool_calls: [{ name: "run_command", args: { command: "python3 -c \"import sys; sys.exit(1)\"" } }] };
+      return { content: "I ran the suite and I have to be straight with you: it FAILED. The run exited non-zero and the output above is the failure — I would not call this green." };
+    case "list":
+      if (!toolResults.length) return { tool_calls: [{ name: "list_files", args: { dir: "." } }] };
+      return { content: "That is the current workspace, listed above — everything that exists right now." };
+    case "append":
+      if (!toolResults.length) return { tool_calls: [{ name: "edit_file", args: { path: "a.txt", old_text: "two\n", new_text: "two\n# reviewed\n" } }] };
+      return { content: "a.txt now ends with the line # reviewed." };
+    case "delete":
+      if (!toolResults.length) return { tool_calls: [{ name: "delete_file", args: { path: "scratch.txt" } }] };
+      return { content: "scratch.txt is deleted." };
+    case "search":
+      if (!toolResults.length) return { tool_calls: [{ name: "search_code", args: { query: "TODO" } }] };
+      return { content: "Here is every TODO in the workspace — the matches are listed above." };
+    case "fetch":
+      if (!toolResults.length) return { tool_calls: [{ name: "fetch_url", args: { url: state.fetchUrl || "http://127.0.0.1/demo" } }] };
+      return { content: "The page says it is the mock demo page — the heading is MOCK PAGE TEXT and the body explains what it is for." };
+    case "server":
+      if (!toolResults.length) return { tool_calls: [{ name: "start_server", args: { command: "python3 -m http.server 4711", port: 4711 } }] };
+      if (!toolResults.some((m) => m.name === "run_command"))
+        return { tool_calls: [{ name: "run_command", args: { command: "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4711/" } }] };
+      if (!toolResults.some((m) => m.name === "stop_server"))
+        return { tool_calls: [{ name: "stop_server", args: { all: true } }] };
+      return { content: "The server answered 200 to the probe and is stopped again — nothing left running." };
+    case "remember":
+      if (!toolResults.length) return { tool_calls: [{ name: "remember", args: { text: "User prefers dark-mode interfaces.", kind: "preference" } }] };
+      if (!toolResults.some((m) => m.name === "recall"))
+        return { tool_calls: [{ name: "recall", args: { query: "dark mode" } }] };
+      return { content: "Saved, and confirmed from memory: you prefer dark-mode interfaces." };
+    case "stats":
+      if (!toolResults.length) return { tool_calls: [{ name: "system_stats", args: {} }] };
+      return { content: "Those are the live numbers — disk, memory, load and uptime, read from this machine just now." };
+    case "ask":
+      if (!toolResults.length) return { tool_calls: [{ name: "ask_user", args: { question: "Which database should I use — SQLite or Postgres?" } }] };
+      return { content: "should not get here" };
+    case "parallel":
+      if (!toolResults.length) return { tool_calls: [{ name: "spawn_subagents", args: { tasks: [
+        { name: "readme", goal: "write the file README.md with a short project overview." },
+        { name: "license", goal: "write the file LICENSE containing a short MIT license." },
+      ] } }] };
+      return { content: "Both parallel agents finished — README.md and LICENSE are in the workspace." };
+    case "undo":
+      if (!toolResults.length) return { tool_calls: [{ name: "undo_last_change", args: { file: "notes/todo.md" } }] };
+      return { content: "Done — the last change to notes/todo.md is undone, so the file is gone again." };
+    case "gitstatus":
+      if (!toolResults.length) return { tool_calls: [{ name: "git_status", args: {} }] };
+      return { content: "The workspace is not a git repository yet — no branch, no commits, nothing to report." };
+    case "todoapp":
+      if (toolResults.length < 3) {
+        const files = [
+          ["index.html", "<!doctype html>\n<html><head><meta charset='utf-8'><title>Todo</title></head>\n<body><ul id='list'></ul><script src='app.js'></script></body></html>\n"],
+          ["app.js", "const items = [];\nfunction add(item) { items.push(item); render(); return items.length; }\nfunction remove(item) { const i = items.indexOf(item); if (i >= 0) items.splice(i, 1); render(); return items.length; }\nfunction render() { const el = document.getElementById(\"list\"); if (el) el.innerHTML = items.map((x) => `<li>${x}</li>`).join(\"\"); }\nadd(\"example task\");\n"],
+          ["test.js", "const list = [];\nlist.push(\"buy milk\");\nif (list.length !== 1) { console.error(\"FAIL: first item added\"); process.exit(1); }\nlist.splice(list.indexOf(\"buy milk\"), 1);\nif (list.length !== 0) { console.error(\"FAIL: item removed\"); process.exit(1); }\nconsole.log(\"2 tests passed\");\n"],
+        ];
+        return { tool_calls: [{ name: "write_file", args: { path: files[toolResults.length][0], content: files[toolResults.length][1] } }] };
+      }
+      if (!toolResults.some((m) => m.name === "run_command"))
+        return { tool_calls: [{ name: "run_command", args: { command: "node test.js" } }] };
+      return { content: "The todo app is built (index.html + app.js + test.js) and the test run above shows 2 tests passed." };
+    case "parallel-site":
+      if (!toolResults.length) return { tool_calls: [{ name: "spawn_subagents", args: { tasks: [
+        { name: "page", isolate: true, goal: "write the file site/index.html — the bakery page." },
+        { name: "styles", isolate: true, goal: "write the file site/styles.css — the bakery stylesheet." },
+      ], merge: "keep-both" } }] };
+      return { content: "Both agents finished and their files are merged back into site/ — the page and its stylesheet are ready to go live." };
+    default:
+      return { content: "unhandled pack scenario: " + state.scenario };
   }
 }
 

@@ -61,17 +61,20 @@ export async function fire(event, ctx = {}, onLog = () => {}) {
 }
 
 /* ---------------- checkpoints ---------------- */
-/** Snapshot a file before mutation so any change is undoable. */
+/** Snapshot a file before mutation so any change is undoable.
+    A file that did not exist yet is recorded with existed:false, so undo can remove it again
+    instead of claiming there is nothing to undo. */
 export async function checkpoint(file, label = "") {
+  let content = null;
+  try { content = await fs.readFile(file, "utf8"); } catch { content = null; }
   try {
-    const content = await fs.readFile(file, "utf8");
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-    const meta = { id, file, label, at: Date.now(), bytes: content.length };
-    await fs.writeFile(path.join(CKPT, id + ".txt"), content, "utf8");
+    const meta = { id, file, label, at: Date.now(), bytes: content?.length || 0, existed: content !== null };
+    await fs.writeFile(path.join(CKPT, id + ".txt"), content ?? "", "utf8");
     await fs.writeFile(path.join(CKPT, id + ".json"), JSON.stringify(meta), "utf8");
     await prune();
     return meta;
-  } catch { return null; }   // new file: nothing to snapshot
+  } catch { return null; }
 }
 
 async function prune(max = 300) {
@@ -100,6 +103,10 @@ export async function listCheckpoints(n = 30) {
 export async function restore(id) {
   const metaPath = path.join(CKPT, id + ".json");
   const meta = JSON.parse(await fs.readFile(metaPath, "utf8"));
+  if (meta.existed === false) {
+    await fs.rm(meta.file, { force: true });
+    return `Removed ${meta.file} — it did not exist before that change.`;
+  }
   const content = await fs.readFile(path.join(CKPT, id + ".txt"), "utf8");
   await fs.writeFile(meta.file, content, "utf8");
   return `Restored ${meta.file} to its state from ${new Date(meta.at).toLocaleString()}`;

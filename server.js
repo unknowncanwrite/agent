@@ -3,10 +3,11 @@ import express from "express";
 import path from "node:path";
 import fsp from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { runAgent, makeImpl, ROOT, APP_DIR, killAll, PROCS, resolvePath, invalidateCache } from "./agent.js";
+import { runAgent, makeImpl, ROOT, APP_DIR, killAll, PROCS, resolvePath, invalidateCache, taskOf } from "./agent.js";
 import { client, loadModels, complete, chainFor, streamWithFailover, isQuota, needsBalance } from "./models.js";
 import { runStream, sysInfo, isFull, setFullAccess } from "./shell.js";
 import { detectToolchain, ensureBrowser } from "./setup.js";
+import { expandCommand, list as listSkills } from "./skills.js";
 import { route as routeMsg, roleFor } from "./router.js";
 import * as OS from "./oscontrol.js";
 import * as MEM from "./memory.js";
@@ -152,9 +153,32 @@ app.post("/api/agent", async (req, res) => {
   finally { res.end(); }
 });
 
+/* ---- skill catalogue: light list for the UI menu, ?full=1 for bodies ---- */
+app.get("/api/skills", async (_req, res) => {
+  const full = String(_req.query.full || "") === "1";
+  const all = await listSkills();
+  res.json(all.map((s) => full
+    ? { name: s.name, dir: s.dir, description: s.description, triggers: s.triggers, body: s.body, bytes: s.bytes }
+    : { name: s.name, dir: s.dir, description: s.description, triggers: s.triggers }));
+});
+
 /* ---- SMART endpoint: detached background jobs, reattachable ---- */
 async function runSmart(send, signal, { messages, model, maxSteps, freeOnly, forceAgent }) {
   const last = [...messages].reverse().find((m) => m.role === "user")?.content || "";
+
+  // A slash command names its skill outright — inject the playbook, force the agent
+  // loop, and skip routing and the classification call entirely.
+  const cmd = typeof last === "string" ? await expandCommand(last) : null;
+  if (cmd) {
+    const task = cmd.task || `Run the ${cmd.command} workflow on the current workspace.`;
+    send({ type: "skill", name: cmd.skill.name, command: cmd.command, bytes: cmd.skill.bytes, task });
+    send({ type: "route", route: "agent", why: `skill ${cmd.skill.name}` });
+    const convo = [...messages, { role: "user", content:
+      `[SKILL ${cmd.command}]\n${cmd.skill.body}\n\n[USER TASK] ${task}` }];
+    await runAgent({ model, messages: convo, send, maxSteps, signal, freeOnly });
+    return;
+  }
+
   send({ type: "routing" });
   const decision = await routeMsg(typeof last === "string" ? last : JSON.stringify(last),
     { freeOnly, signal, forceAgent });
@@ -196,7 +220,7 @@ app.post("/api/smart", async (req, res) => {
   res.on("close", () => { ended = true; sub?.detach(); });
 
   const r = JOBS.start({
-    chatId, title: title || String(messages.at(-1)?.content || "").slice(0, 60),
+    chatId, title: title || String(taskOf(messages) || "").slice(0, 60),
     fn: (s, signal) => runSmart(s, signal, { messages, model, maxSteps, freeOnly, forceAgent })
       .catch((e) => {
         const msg = isQuota(e) ? "Daily FREE-model quota is used up. It resets tomorrow — or add credit to use paid models."

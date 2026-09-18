@@ -56,6 +56,20 @@ user message
 | `publish.js` | Auto-publish a built website (Vercel / Render / GitHub Pages) |
 | `browser.js` | Playwright vision tools |
 | `start.js` | Supervisor: preflight checks, crash limits, restart |
+| `skills.js` | Skill discovery + catalogue + trigger matching + `/slash` command expansion (`skills/gstack*/` is the ported gstack sprint) |
+
+## Skills and slash commands
+
+A skill is `skills/<name>/SKILL.md` with front matter (`name`, `description`, `triggers`). The
+catalogue of every skill is appended to the system prompt, so the model always knows what is
+available; trigger matching surfaces the likely one, and `use_skill` loads its playbook.
+
+A message that starts with `/name` (or `/gstack-name`) is a **command**: `skills.js:
+expandCommand()` resolves it, `server.js: runSmart()` injects the playbook into the conversation,
+emits a `skill` event for the UI and forces the agent loop — the router is skipped, because the user
+already said which workflow to run. The injected block is marked (`[SKILL …]` … `[USER TASK]`), and
+`agent.js: taskOf()` is the single place that knows how to read past scaffolding blocks when the
+*user's* request is needed (job title, memory record, trigger matching).
 
 ## Enabling cursor control
 

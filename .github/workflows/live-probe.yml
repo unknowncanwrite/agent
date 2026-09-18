@@ -14,6 +14,14 @@ on:
         description: Base URL of the deployment
         required: false
         default: https://agent-3tll.onrender.com
+      pack:
+        description: Also run the 20-prompt pack (true/false)
+        required: false
+        default: "false"
+      gstack:
+        description: Also run one gstack stage (/gstack-office-hours) against the deployment (true/false)
+        required: false
+        default: "false"
       prompt:
         description: Task to run through the live agent
         required: false
@@ -175,6 +183,66 @@ jobs:
           BASE="$BASE" node probe.mjs || echo "::warning::ui probe script exited non-zero"
           cp -f /tmp/uitest/ui-*.png "$GITHUB_WORKSPACE/" 2>/dev/null || true
 
+      # --- the two on-demand additions: gstack = one stage end to end,
+      #     pack = the twenty prompts, one chat each (tests/prompts.json) ---
+      - name: 3c · run one gstack stage end to end
+        if: github.event.inputs.gstack == 'true'
+        run: |
+          set -uo pipefail
+          say() { printf '\n───── %s ─────\n' "$1"; }
+          say "GET /api/skills (the pack must be deployed)"
+          curl -sS -m 60 "$BASE/api/skills" > skills.json || true
+          gcount=$(jq '[.[] | select(.name | startswith("gstack"))] | length' skills.json 2>/dev/null || echo 0)
+          echo "::notice::gstack skills on the deployment: ${gcount} (expected 29)"
+          say "POST /api/smart — /gstack-office-hours (chat live-gstack-<run>)"
+          printf '{"messages":[{"role":"user","content":%s}],"chatId":"live-gstack-%s","maxSteps":8}' \
+            "$(printf '%s' "/gstack-office-hours I want to build a daily briefing app for my calendar" | jq -Rs .)" \
+            "${{ github.run_number }}" > payload-gstack.json
+          timeout 900 curl -sS -N -H 'content-type: application/json' --data @payload-gstack.json \
+            "$BASE/api/smart" > sse-gstack.log 2>&1 || echo "::warning::gstack stream ended early"
+          skill=$(grep -o '"type":"skill"[^}]*' sse-gstack.log | head -1 || true)
+          route=$(grep -o '"type":"route"[^}]*' sse-gstack.log | head -1 || true)
+          tools=$(grep -o '"type":"tool_start","name":"[a-z_]*"' sse-gstack.log | sed 's/.*name":"//;s/"//' | sort -u | tr '\n' ',' | sed 's/,$//' || true)
+          status=$(curl -sS -m 60 "$BASE/api/jobs" 2>/dev/null | jq -r '.[] | select(.chatId | startswith("live-gstack-")) | .status' 2>/dev/null | head -1)
+          first=$(grep -o '"type":"delta","text":"[^"]*' sse-gstack.log | head -4 | sed 's/.*text":"//' | tr -d '"' | tr '\n' ' ' | head -c 200 || true)
+          echo "::notice::gstack skill event: ${skill:-NONE — the pack is not on this build}"
+          echo "::notice::gstack route: ${route:-NONE}"
+          echo "::notice::gstack tools used: ${tools:-none}"
+          echo "::notice::gstack status: ${status:-unknown} — first of the answer: ${first:-<none>}"
+
+      - name: 3d · run the 20-prompt pack (one chat per prompt)
+        if: github.event.inputs.pack == 'true'
+        run: |
+          set -uo pipefail
+          say() { printf '\n───── %s ─────\n' "$1"; }
+          mkdir -p tests
+          if [ ! -f tests/prompts.json ]; then
+            # no checkout available? fetch the file from the default branch
+            curl -sS -m 60 -o tests/prompts.json \
+              "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/tests/prompts.json" || true
+          fi
+          [ -f tests/prompts.json ] || { echo "::error::tests/prompts.json unavailable — cannot run the pack"; exit 1; }
+          total=$(jq 'length' tests/prompts.json)
+          done_n=0; tools_n=0; pub_n=0
+          say "sending $total prompts — each one gets its own chat (live-pack-<id>)"
+          while IFS= read -r p; do
+            id=$(jq -r '.id' <<<"$p")
+            text=$(jq -r '.prompt' <<<"$p")
+            say "prompt $id: $(printf '%s' "$text" | head -c 80)"
+            printf '{"messages":[{"role":"user","content":%s}],"chatId":"live-pack-%s","maxSteps":16}' \
+              "$(printf '%s' "$text" | jq -Rs .)" "$id" > "pack-$id.payload.json"
+            timeout 600 curl -sS -N -H 'content-type: application/json' --data @"pack-$id.payload.json" \
+              "$BASE/api/smart" > "pack-$id.sse" 2>&1 || echo "::warning::prompt $id stream ended early"
+            route=$(grep -o '"type":"route"[^}]*' "pack-$id.sse" | head -1 | grep -o '"route":"[a-z]*"' | sed 's/"route":"//;s/"//' || echo none)
+            nt=$(grep -c '"type":"tool_start"' "pack-$id.sse" 2>/dev/null || echo 0)
+            np=$(grep -c '"type":"publish"' "pack-$id.sse" 2>/dev/null || echo 0)
+            status=$(grep -o '"type":"job_end"[^}]*' "pack-$id.sse" | head -1 | grep -o '"status":"[a-z]*"' | sed 's/"status":"//;s/"//' || echo running)
+            first=$(grep -o '"type":"delta","text":"[^"]*' "pack-$id.sse" | head -4 | sed 's/.*text":"//' | tr -d '"' | tr '\n' ' ' | head -c 160 || true)
+            done_n=$((done_n+1)); tools_n=$((tools_n+nt)); pub_n=$((pub_n+np))
+            echo "::notice::[$id] route=$route tools=$nt status=$status publish=$((np>0?1:0)) — ${first:-<no answer seen>}"
+          done < <(jq -c '.[]' tests/prompts.json)
+          echo "::notice::pack summary: $done_n/$total prompts finished, $tools_n tool calls, $pub_n publish events"
+
       - name: 4 · uploads the evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -184,8 +252,11 @@ jobs:
             *.json
             sse.log
             sse-publish.log
+            sse-gstack.log
+            skills.json
             page.html
             ui-*.png
+            pack-*.sse
           if-no-files-found: ignore
 
       # The key facts are emitted as annotations (readable through the API/UI without

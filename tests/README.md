@@ -19,7 +19,20 @@ node tests/run.mjs security
 * every suite runs inside a throwaway copy of the app under `/tmp` with
   `AGENT_WORKSPACE` pointing at a temp workspace — your repo and workspace are untouched
 
-Last full run: **183 passed, 0 failed, 6 findings** (the 6 are the deliberately unfixed
+### The 20 prompts, live
+
+`07-prompts.test.mjs` proves the *pipeline* for all twenty prompts offline. To send the same
+twenty prompts to a **real deployment with the real models**:
+
+> GitHub → **Actions** → *live smoke test (deployment)* → **Run workflow** → set `pack` to
+> `true` (optionally change `base`) → Run.
+
+Each prompt becomes its own chat (`live-pack-<id>`), and the run publishes one annotation per
+prompt with route, tool count, model, status and the first line of the answer, plus a summary
+line. Transcripts are attached as the `prompt-pack-<n>` artifact. The prompt list lives in
+`tests/prompts.json` — edit it and re-run to test more phrasings.
+
+Last full run: **226 passed, 0 failed, 6 findings** (the 6 are the deliberately unfixed
 security-posture items — see `REPORT.md`).
 
 ## What is in here
@@ -41,6 +54,8 @@ security-posture items — see `REPORT.md`).
 | `04-server.test.mjs` | the real server end-to-end: SSE chat, `/api/smart` routing, the full autonomous loop (write → run → verify), parallel tool batches, unknown tool, `ask_user`, supervisor gates, maxSteps, jobs list/reattach/stop/duplicate, terminal, upload, workspace API + reset, memory, discovery endpoints, `/api/publish`, and a build run that auto-publishes and streams `publish_start`/`publish_log`/`publish` |
 | `05-security.test.mjs` | default jailed config vs `AGENT_FULL_ACCESS=true` (what the public deployment runs), auth surface, shell-guard coverage (blocked *and* allowed, so the guard cannot silently start refusing real work), hook injection, key-preview exposure |
 | `06-publish.test.mjs` | auto-publish: site detection, `npm run build` handling, file collection (skip/binary/base64), the Vercel / Render / GitHub backends against the mock's fake APIs, and the `publish_website` tool including the "nothing configured" fallback |
+| `07-prompts.test.mjs` | the 20-prompt pack: twenty prompts a real user would type, each driven through the real server pipeline (route → agent → tools → jobs → publish) and asserting what the product must do with it, then audited as a whole (job accounting, publish discipline, no cross-talk, event-for-event replay, a rejected publish reported honestly, three concurrent chats isolated) |
+| `08-gstack.test.mjs` | the gstack pack: front matter + triggers + no Claude-Code-only instructions on all 29 skills, attribution, catalogue and trigger matching, `use_skill`, `GET /api/skills`, the UI menu contract, the slash-command path (playbook injected, agent loop forced, no classification call, bare-name resolution, path/unknown-command fall-through), a full stage run producing its artefact, chained stages, and the title/memory pollution guards |
 
 ### Mock upstream
 

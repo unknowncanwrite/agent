@@ -1,0 +1,22 @@
+[
+  { "id": "01-chat-name",     "prompt": "What's a good name for a coffee shop?", "expect": "chat answer, no tools" },
+  { "id": "02-chat-summary",  "prompt": "Summarise what you can do for me in two sentences.", "expect": "chat answer, no tools" },
+  { "id": "03-note-file",     "prompt": "Create notes/todo.md with three bullet points about launching a landing page.", "expect": "write_file → notes/todo.md has 3 bullets" },
+  { "id": "04-website",       "prompt": "Make a simple one-page website for a bakery and make sure the page works.", "expect": "build + verify + auto-publish, returns a live URL" },
+  { "id": "05-python",        "prompt": "Write a Python script that prints the first 10 Fibonacci numbers, then run it and show me the output.", "expect": "script written, executed, numbers in the terminal" },
+  { "id": "06-csv",           "prompt": "Save a CSV of three products with prices and read it back to me.", "expect": "write_file + read_file" },
+  { "id": "07-failing-tests", "prompt": "Create a tiny Node test that fails, run it, and tell me honestly whether it passes.", "expect": "failure reported, not hidden" },
+  { "id": "08-list-files",    "prompt": "What files are in my workspace right now?", "expect": "list_files with real entries" },
+  { "id": "09-edit-file",     "prompt": "Create a.txt with two lines, then append a line that says # reviewed.", "expect": "file written then edited" },
+  { "id": "10-delete-file",   "prompt": "Create scratch.txt and then delete it again, I don't need it.", "expect": "delete_file, file gone" },
+  { "id": "11-search",        "prompt": "Write a file with a TODO comment in it, then search the workspace for TODO comments.", "expect": "search_code finds the comment" },
+  { "id": "12-fetch-page",    "prompt": "Fetch https://example.com and tell me what the page says.", "expect": "fetch_url returns page text (browser or plain HTTP)" },
+  { "id": "13-server",        "prompt": "Start a small HTTP server on port 4711 in the workspace, check that it responds, then stop it.", "expect": "start_server + probe + stop_server" },
+  { "id": "14-remember",      "prompt": "Remember that I prefer dark-mode interfaces, and confirm what you remember.", "expect": "remember + recall" },
+  { "id": "15-stats",         "prompt": "How much disk space and memory is free on this machine?", "expect": "system_stats with real numbers" },
+  { "id": "16-ask",           "prompt": "Ask me which database to use before you start writing anything.", "expect": "ask_user pauses the run" },
+  { "id": "17-parallel",      "prompt": "Do two independent jobs in parallel: write the file README.md and write the file LICENSE.", "expect": "spawn_subagents, both files exist" },
+  { "id": "18-undo",          "prompt": "Create a file called undo-me.txt, then undo that change.", "expect": "the file it created is removed again" },
+  { "id": "19-git-status",    "prompt": "Show me git status for the workspace.", "expect": "clear answer (not-a-repo is fine), no crash" },
+  { "id": "20-todo-app",      "prompt": "Build me a small todo app (HTML + JS) with a test, make sure the test passes, and get it live.", "expect": "app + passing test + published URL" }
+]

@@ -173,6 +173,42 @@ A pinned right-hand dock — never scrolls away:
 
 ---
 
+## gstack — Garry Tan's sprint, ported to NEXUS
+
+[gstack](https://github.com/garrytan/gstack) is Garry Tan's opinionated sprint of slash-command
+specialists — *think → plan → build → review → test → ship → reflect*, each stage feeding the
+next. NEXUS ships it as **29 skills** (a hub plus 28 stages) in its own skill format, wired to
+NEXUS's real tools. Ported with attribution: gstack is MIT © 2026 Garry Tan.
+
+Type `/` in the message box and the menu lists every skill with its triggers and description:
+
+```
+/gstack-office-hours I want to build a daily briefing app for my calendar
+/gstack-investigate why does the publish step lose the site name?
+/gstack-review review the change I just made to publish.js
+/gstack-ship ship the paste feature
+```
+
+`/ship` and `/gstack-ship` are the same command — the bare name resolves to the pack. A slash
+command skips routing and the classification call, injects the playbook into the run, and
+forces the agent loop; the UI shows a `🧩 skill loaded` card for it. Plain requests still work
+by trigger: *"is this worth building?"* surfaces `/gstack-office-hours` on its own, and the
+agent can load any stage with the `use_skill` tool.
+
+| What it gives you | Where it lives |
+|---|---|
+| the 29 playbooks | `skills/gstack*/SKILL.md`, auto-discovered like every other skill |
+| the catalogue | every system prompt lists them, so the model always knows they exist |
+| trigger matching | plain-English requests surface the right stage |
+| the API | `GET /api/skills` (light list) and `GET /api/skills?full=1` (with bodies) |
+| the tests | `tests/08-gstack.test.mjs` (16 tests) + the 20-prompt pack in `tests/07` |
+| the live check | GitHub Actions → *live smoke test (deployment)* → **Run workflow** → `gstack = true` |
+
+The full stage table and the port's deliberate differences from upstream are in
+[`docs/GSTACK.md`](docs/GSTACK.md).
+
+---
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -182,6 +218,7 @@ A pinned right-hand dock — never scrolls away:
 | `PORT` | `3000` | Web UI port |
 | `AGENT_WORKSPACE` | `./workspace` | Where the agent builds |
 | `AGENT_FULL_ACCESS` | `false` | Allow access beyond the workspace |
+| `NEXUS_NO_LOCAL_DETECT` | — | `1` = skip the scan for local model servers at boot |
 | `VERCEL_TOKEN` | — | Publish built websites to Vercel (simplest option) |
 | `RENDER_DEPLOY_HOOK_URL` | — | …or trigger a Render service deploy hook instead |
 | `RENDER_API_KEY` + `RENDER_SERVICE_ID` | — | …or deploy through the Render API |

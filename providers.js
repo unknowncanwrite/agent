@@ -112,9 +112,21 @@ export async function ping(baseURL, ms = 2500) {
   } catch { clearTimeout(t); return { up: false }; }
 }
 
+/* Set NEXUS_NO_LOCAL_DETECT=1 to skip the local-server scan entirely. It keeps
+ * boot deterministic on machines that happen to run an unrelated server on one
+ * of the preset ports (8081/11434/1234/8080/1337/8000) — the test suite sets it
+ * so a stray Ollama or Gemini shim can't leak into the fixtures. */
+function localDetectOff() {
+  return /^(1|true|yes|on)$/i.test(String(process.env.NEXUS_NO_LOCAL_DETECT || "").trim());
+}
+
 /** Scan for any local model server that's running. */
 export async function detectLocal(onLog = () => {}) {
   const found = [];
+  if (localDetectOff()) {
+    onLog("local-server scan skipped (NEXUS_NO_LOCAL_DETECT)\n");
+    return found;
+  }
   await Promise.all(LOCAL_PRESETS.map(async (p) => {
     const r = await ping(p.baseURL);
     if (r.up) {
