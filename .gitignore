@@ -5,6 +5,7 @@ providers.json
 .providers-off.json
 
 # runtime output
+.port
 workspace/
 uploads/
 .memory/

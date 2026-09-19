@@ -88,8 +88,35 @@ export async function interact({ url, file, actions = [], root, width = 1280, he
 }
 
 /** Fetch a page and return readable text (agent's "read the internet") */
+/** A browser we already have — never triggers a download. */
+async function existingBrowser() {
+  const setup = await import("./setup.js");
+  if (!setup.chromiumPath() && !setup.systemBrowser()) return null;
+  return await browser();
+}
+
+/** Readable text of a page without any browser: plain HTTP + a crude HTML strip. */
+export async function httpText(url, max = 12000) {
+  try {
+    const r = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(30000),
+      headers: { "user-agent": "Mozilla/5.0 (compatible; NEXUS/1.0)" } });
+    if (!r.ok) return `ERROR fetching page: HTTP ${r.status} ${r.statusText}`;
+    const raw = await r.text();
+    const txt = raw
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<!--[\s\S]*?-->/g, " ")
+      .replace(/<\/(p|div|li|h[1-6]|tr|section|article|br)>/gi, "\n")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/ /g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+      .replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+    return txt.slice(0, max);
+  } catch (e) { return "ERROR fetching page: " + (e?.message || e); }
+}
+
 export async function fetchText(url, max = 12000) {
-  const b = await browser();
+  const b = await existingBrowser().catch(() => null);
+  if (!b) return await httpText(url, max);   // no Chromium: plain HTTP still gets the page
   const ctx = await b.newContext();
   const page = await ctx.newPage();
   let out = "";

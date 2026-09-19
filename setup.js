@@ -41,6 +41,8 @@ export function systemBrowser() {
 }
 
 let installing = null;
+let installFailedAt = 0;
+const INSTALL_COOLDOWN_MS = 5 * 60 * 1000;
 
 /**
  * Ensure a usable browser exists. Downloads Playwright's Chromium if needed.
@@ -54,6 +56,15 @@ export async function ensureBrowser(onLog = () => {}) {
   if (sys) {
     onLog(`Found an installed browser: ${sys}\nUsing it instead of downloading.\n`);
     return { ok: true, path: sys, source: "system" };
+  }
+
+  if (String(process.env.NEXUS_BROWSER_INSTALL || "").trim() === "0") {
+    onLog("NEXUS_BROWSER_INSTALL=0 — browser install is disabled, skipping.\n");
+    return { ok: false, error: "browser install disabled (NEXUS_BROWSER_INSTALL=0)" };
+  }
+  if (installFailedAt && Date.now() - installFailedAt < INSTALL_COOLDOWN_MS) {
+    onLog("Chromium install failed less than 5 minutes ago — not retrying yet.\n");
+    return { ok: false, error: "chromium install failed recently, retry later" };
   }
 
   if (installing) return installing;
@@ -75,6 +86,7 @@ export async function ensureBrowser(onLog = () => {}) {
       const p2 = chromiumPath();
       if (p2) return { ok: true, path: p2, source: "downloaded" };
     }
+    installFailedAt = Date.now();
     onLog("\nChromium install failed. Visual tools will be unavailable.\n" + (r.stderr || "").slice(-800));
     return { ok: false, error: "chromium install failed" };
   })().finally(() => { installing = null; });

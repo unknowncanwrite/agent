@@ -4,7 +4,7 @@
 public deployment `https://agent-3tll.onrender.com` is serving.
 **Suite:** `tests/` (see `tests/README.md`), developed on branch `arena/01a0a92f-agent`.
 **Run:** `cd /home/user/agent && node tests/run.mjs`
-**Result:** **183 passed, 0 failed, 6 findings** (87 s, no network required).
+**Result:** **226 passed, 0 failed, 6 findings** (99 s, no network required).
 
 | suite | passed | failed | findings |
 |---|---:|---:|---:|
@@ -14,6 +14,8 @@ public deployment `https://agent-3tll.onrender.com` is serving.
 | 04 server (end-to-end) | 35 | 0 | 0 |
 | 05 security | 17 | 0 | 7 |
 | 06 publish | 18 | 0 | 0 |
+| 07 prompts (20-prompt pack) | 27 | 0 | 0 |
+| 08 gstack pack | 16 | 0 | 0 |
 
 **Updated after the second pass.** Nine findings were fixed (the tests that proved them now
 report `✓ (fixed)` and keep guarding the behaviour), and the new auto-publish feature was
@@ -407,6 +409,77 @@ end and asserts a deployment actually reaches the (mock) Vercel API.
 **To switch it on for the deployment:** set `VERCEL_TOKEN` (easiest — create a token, no CLI
 needed) or `RENDER_DEPLOY_HOOK_URL` in the Render service's environment variables. Nothing else
 in the app needs to change.
+
+## 6c. The gstack pack and the 20-prompt pack (third pass)
+
+**What was added.** Two new suites and the feature they pin down:
+
+* **Suite 07 — the 20-prompt pack (27 tests).** Twenty prompts a real user would type
+  (name a coffee shop, build a bakery site, run a failing test suite honestly, start and stop
+  a server, remember a preference, ask-to-pause, two parallel sub-agents, undo a file it
+  created, show `git status`, …) are each sent through the *real* server pipeline —
+  `POST /api/smart` → router → agent loop → tools → jobs → auto-publish — against the scripted
+  upstream, and each prompt asserts what the product must do with it. Seven more tests audit
+  the pack as a whole: 20 finished jobs with exact tool accounting, publishing only for the
+  two prompts that actually built sites, no uncaught exceptions or stream misuse, an
+  event-for-event replay of a finished run, a rejected publish (403 from the host) reported to
+  the user instead of swallowed, and three concurrent chats staying isolated.
+* **Suite 08 — the gstack pack (16 tests).** [gstack](https://github.com/garrytan/gstack)
+  (MIT © 2026 Garry Tan) is Garry Tan's sprint of slash-command specialists; it is now 29
+  skills in NEXUS (a hub + 28 stages). The suite checks the pack itself (clean front matter,
+  ≥3 triggers and ≥700 bytes of real playbook per skill, no Claude-Code-only instructions —
+  `AskUserQuestion`, plan mode, `~/.claude/skills` — intact MIT attribution, and every stage
+  naming at least one tool NEXUS actually has), the plumbing (catalogue in the system prompt,
+  trigger matching for plain-English requests, `use_skill` returning the real body,
+  `GET /api/skills` light vs `?full=1`, and the UI menu contract), and the behaviour
+  (a slash command injects the playbook, forces the agent loop, skips routing *and* the
+  classification call; a bare `/office-hours` resolves to the pack and gets a default task;
+  a filesystem path and an unknown command fall through to normal routing; a stage run
+  produces its artefact; stages chain; and the injected playbook never leaks into job titles
+  or memory). The stage table and the deliberate differences from upstream live in
+  `docs/GSTACK.md`.
+
+**What the tests found (all fixed, all guarded).**
+
+1. **Job titles and memory were being polluted.** A slash command injects the whole playbook
+   into the conversation, and the code that records a session's task took the *first* user
+   message — so memory started storing `TASK: [SKILL /gstack-office-hours] …` and the next
+   run's context was contaminated with it (this is how the tests caught it: a later stage
+   matched the *previous* stage's text). There is now one helper, `taskOf(messages)` in
+   `agent.js`, that skips the injected `[SKILL]`/`[CONTEXT]`/`[SUPERVISOR]`/`[PUBLISHER]`
+   blocks and unwraps `[USER TASK]`; the job title, the memory record and the
+   skill-trigger matching all use it.
+2. **Stage detection had to be explicit.** Injected playbook + memory means several
+   `[SKILL …]` markers can be present in one conversation; the code that consumes a stage's
+   own text now takes the *last* marker, not "the one that appears somewhere".
+3. **Undo on a newly created file claimed there was nothing to undo.** The checkpoint
+   snapshot skipped files that did not exist yet; they are now recorded with
+   `existed: false` and undo removes them again (prompt 18 in the pack proves it: the file
+   `write_file` created is gone after the undo).
+4. **`fetch_url` needed the browser to exist at all.** With no Chromium installed the tool
+   failed outright; it now falls back to plain HTTP (`httpText`) — prompt 12 in the pack
+   proves the page text comes back without any browser.
+5. **A site built by parallel sub-agents was never auto-published.** The isolated cells are
+   merged back into the workspace at the end of `spawn_subagents`, but the merged files were
+   not counted as "written by this run", so the auto-publish gate (`siteFromWritten`) could
+   not see the site. Merged files are now noted into the run's written-files list, and prompt
+   21 (two sub-agents build `site/`, then the run publishes it) proves the whole path.
+6. **Hermetic boot for the suite itself.** Two new knobs: `NEXUS_NO_LOCAL_DETECT=1` skips the
+   local-model-server scan at boot (a stray Ollama/Gemini shim on 8081/11434/… used to change
+   which model `pick()` returns and turn green tests red — the suite now sets it itself), and
+   `NEXUS_BROWSER_INSTALL=0` disables the 150 MB Chromium download in test mode. A failed
+   browser install is also rate-limited (5-minute cooldown) so a broken box cannot burn a
+   download attempt per tool call.
+
+**The live check.** `tests/prompts.json` is the same twenty prompts as data. Against a
+deployment: GitHub → **Actions** → *live smoke test (deployment)* → **Run workflow** → set
+`pack` to `true` (or `gstack` to `true` to run one gstack stage end to end) → Run. Each prompt
+becomes its own chat (`live-pack-<id>`); the run annotates the check run with route, tool
+count, model, status and the first line of each answer, and attaches the transcripts as the
+`prompt-pack-<n>` artifact.
+
+**Result.** The suite went from 183 to **226 passed, 0 failed, 6 findings** — the same six
+open-by-decision security items as before, nothing new.
 
 ## 7. Remaining work
 

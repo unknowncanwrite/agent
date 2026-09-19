@@ -11,6 +11,13 @@ export const TESTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const APP_DIR = path.resolve(TESTS_DIR, "..");
 
 /* ---------------- assertions / reporting ---------------- */
+/* Hermetic suite: never let a local model server (Ollama, LM Studio, a Gemini
+ * shim, anything squatting on 8081/11434/1234/8080/1337/8000) leak into the
+ * fixtures — it changes which model `pick()` returns and turns green tests red.
+ * Set before any suite imports providers.js/models.js. */
+process.env.NEXUS_NO_LOCAL_DETECT = "1";
+process.env.NEXUS_BROWSER_INSTALL ??= "0";   // the suite never needs a 150 MB Chromium download
+
 const state = { suite: null, pass: 0, fail: 0, failures: [], notes: [], findings: [] };
 
 export function suite(name) { state.suite = name; console.log(`\n\x1b[1m${name}\x1b[0m`); }

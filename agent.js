@@ -265,6 +265,50 @@ async function tree(dir, depth = 0, max = 5, acc = [], baseDir = dir) {
 const CACHE = { read: new TTLCache(15000, 120), tree: new TTLCache(8000, 40), web: new TTLCache(300000, 60) };
 export function invalidateCache() { CACHE.read.clear(); CACHE.tree.clear(); }
 
+/**
+ * The user's real request, not the scaffolding we wrap around it.
+ * A slash-command run carries the whole playbook in a [SKILL …] block, and the agent injects
+ * [CONTEXT]/[SUPERVISOR]/[PUBLISHER] blocks too — those must never become the job title, the
+ * memory record or the trigger text for skill matching.
+ */
+const INJECTED_BLOCK = /^\s*\[(SKILL|CONTEXT|PUBLISHER|SUPERVISOR|SUPERVISOR —|todo\.md|REMINDER|RECITE|SELF)/;
+export function taskOf(messages) {
+  for (const m of messages || []) {
+    if (m?.role !== "user") continue;
+    const c = typeof m.content === "string" ? m.content : "";
+    if (!c.trim()) continue;
+    if (INJECTED_BLOCK.test(c)) {
+      const t = /\[USER TASK\]\s*([\s\S]+)$/.exec(c);
+      if (t) return t[1].trim();
+      continue;
+    }
+    return c;
+  }
+  const last = [...(messages || [])].reverse().find((m) => m?.role === "user");
+  return typeof last?.content === "string" ? last.content : "";
+}
+
+/**
+ * taskOf for the CURRENT request: a chained chat carries several [SKILL …] blocks, and the
+ * stage being run is identified by the LAST real user message (or the last injected block's
+ * [USER TASK]) — never by the first one. The supervisor's detectors and the learn pass
+ * review the stage against this text.
+ */
+export function lastTaskOf(messages) {
+  for (const m of [...(messages || [])].reverse()) {
+    if (m?.role !== "user") continue;
+    const c = typeof m.content === "string" ? m.content : "";
+    if (!c.trim()) continue;
+    if (INJECTED_BLOCK.test(c)) {
+      const t = /\[USER TASK\]\s*([\s\S]+)$/.exec(c);
+      if (t) return t[1].trim();
+      continue;
+    }
+    return c;
+  }
+  return taskOf(messages);
+}
+
 /** Remember a file this run produced (used to decide what may be auto-published). */
 function noteCtxFile(ctx, abs) {
   if (!ctx) return;
@@ -680,6 +724,9 @@ export function makeImpl(ctx) {
           try {
             const r = await SWARM.mergeCell(dir, ROOT, merge);
             moved.push(...r.moved); skipped.push(...r.skipped);
+            for (const rel of r.moved) {                     // merged files count as written this run
+              note(path.isAbsolute(rel) ? rel : path.join(ROOT, rel));
+            }
             await fs.rm(dir, { recursive: true, force: true });
           } catch {}
         }
@@ -1130,8 +1177,7 @@ async function _runAgent(ctx, { model, messages, send, maxSteps = 40, signal, fr
     try { memBlock += await MEM.contextBlock(); } catch {}
     try { await SKILL.ensureBuiltins(); memBlock += await SKILL.catalogue(); } catch {}
     try {
-      const first = messages.find((m) => m.role === "user")?.content;
-      const hits = await SKILL.match(typeof first === "string" ? first : "");
+      const hits = await SKILL.match(taskOf(messages));
       if (hits.length) memBlock += `\nRELEVANT SKILLS for this task: ${hits.map((h) => h.name).join(", ")} — load them with use_skill first.\n`;
     } catch {}
     try { await MCP.ensureConfig(); await HOOK.ensureHooks(); } catch {}
@@ -1182,7 +1228,7 @@ async function _runAgent(ctx, { model, messages, send, maxSteps = 40, signal, fr
   let warnedSlow = false;
   const MAX_RUN_MS = Number(process.env.AGENT_MAX_RUN_MS || 600000);   // 10 min default
   const track = _depth === 0 ? SUP.makeTracker() : null;
-  const userTask = messages.find((m) => m.role === "user")?.content;
+  const userTask = lastTaskOf(messages);
   const taskText = typeof userTask === "string" ? userTask : JSON.stringify(userTask || "").slice(0, 500);
   if (track) send({ type: "critic_on" });
 
@@ -1434,7 +1480,7 @@ async function _runAgent(ctx, { model, messages, send, maxSteps = 40, signal, fr
       send({ type: "done", usage: res.usage || null, steps: step, model: used });
       if (_depth === 0) {
         try { const n = killAll(_runId); if (n) send({ type: "cleanup", servers: n }); } catch {}
-        const task = messages.find((m) => m.role === "user")?.content;
+        const task = taskOf(messages);
         MEM.logSession({ task: typeof task === "string" ? task : "task",
           outcome: (msg.content || "").slice(0, 400), ms: 0 }).catch(() => {});
         if (track) {
